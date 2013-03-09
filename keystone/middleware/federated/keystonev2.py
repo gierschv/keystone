@@ -102,7 +102,7 @@ class CredentialValidator(object):
     def __call__(self):
         return None
         
-    def validate(self, response, realm_id):
+    def validate(self, req, response, realm_id):
         catalog_api = catalog.controllers.EndpointV3()
         context = {}
         context['is_admin'] = True

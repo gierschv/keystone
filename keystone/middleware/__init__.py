@@ -15,3 +15,4 @@
 # under the License.
 
 from keystone.middleware.core import *
+from moonshot import *

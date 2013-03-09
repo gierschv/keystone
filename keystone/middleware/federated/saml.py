@@ -185,7 +185,7 @@ class CredentialValidator(object):
     def __call__(self):
         return None
         
-    def validate(self, data, realm_id):
+    def validate(self, req, data, realm_id):
         resp = urlparse.parse_qsl(data)
         k, v = resp[0]
         resp = base64.b64decode(v)

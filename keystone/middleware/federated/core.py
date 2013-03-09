@@ -111,13 +111,15 @@ class FederatedAuthentication(object):
         data = simplejson.loads(body)
        
         if 'idpResponse' in data:
-            username, expires, validatedUserAttributes = self.validate(data, data['realm'])		
-            identity_api = identity.controllers.UserV3()
-            user_manager = user_management.UserManager()
-            user, tempPass = user_manager.manage(username, expires)
-            resp = {}
-            resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
-            LOG.debug(resp)
+            username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])
+            if type(username) == dict:
+                resp = username
+            else:
+                identity_api = identity.controllers.UserV3()
+                user_manager = user_management.UserManager()
+                user, tempPass = user_manager.manage(username, expires)
+                resp = {}
+                resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
             return valid_Response(resp)
 
         else:
@@ -148,7 +150,7 @@ class FederatedAuthentication(object):
         ris = processing_module.RequestIssuingService()
         return ris.getIdPRequest(self.conf['requestSigningKey'], self.conf['SPName'], endpoint)
 
-    def validate(self, data, realm):
+    def validate(self, req, data, realm):
         ''' Get the validated attributes '''
         catalog_api = catalog.controllers.ServiceV3()
         context = {'is_admin': True}
@@ -156,7 +158,7 @@ class FederatedAuthentication(object):
         type = service["type"].split('.')[1]
         processing_module = load_protocol_module(type)
         cred_validator = processing_module.CredentialValidator()
-        return cred_validator.validate(data['idpResponse'], service['id'])
+        return cred_validator.validate(req, data['idpResponse'], service['id'])
 
     def mapAttributes(self, data, attributes, user, password):
         mapper = controllers.AttributeMappingController()
@@ -196,10 +198,14 @@ class FederatedAuthentication(object):
         unscoped_token = token_api.authenticate(context, auth={'passwordCredentials': {'username': user['name'], 'password': password}})
         return unscoped_token['access']['token']['id'], [project_api.get_project(context, project_id=p)['project']  for p in projects]
 
+protocol_modules = {}
 def load_protocol_module(protocol):
     ''' Dynamically load correct module for processing authentication
         according to identity provider's protocol'''
-    return imp.load_source(protocol, os.path.dirname(__file__)+'/'+protocol+".py")
+    global protocol_modules
+    if protocol not in protocol_modules:
+        protocol_modules[protocol] = imp.load_source(protocol, os.path.dirname(__file__)+'/'+protocol+".py")
+    return protocol_modules[protocol]
         
 
 def filter_factory(global_conf, **local_conf):
