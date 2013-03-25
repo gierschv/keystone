@@ -109,7 +109,8 @@ class FederatedAuthentication(object):
         
         body = req.body 
         data = simplejson.loads(body)
-       
+        print data
+
         if 'idpResponse' in data:
             username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])
             if type(username) == dict:
@@ -161,13 +162,18 @@ class FederatedAuthentication(object):
         return cred_validator.validate(req, data['idpResponse'], service['id'])
 
     def mapAttributes(self, data, attributes, user, password):
+        print "mapAttributes: %r %r %r %r" % (data, attributes, user, password)
+
         mapper = controllers.AttributeMappingController()
         identity_api = identity.controllers.UserV3()
         legacy_identity_api = identity.controllers.User()
         role_api = identity.controllers.RoleV3()
         project_api = identity.controllers.ProjectV3()
         context = {'is_admin': True}
+        print 'BEFORE MAPPING: %r' % attributes
         toMap = mapper.map(context, attributes=attributes)['attribute_mappings']
+        print 'MAPPED: %r' % toMap
+
         user_id = user['id']
         if user.get('expires') is not None:
             user.pop("expires")

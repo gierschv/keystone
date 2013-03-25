@@ -51,12 +51,14 @@ Created on 8 March 2013
 '''
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import webob.dec
 import webob.exc
 import json
 import platform
 import moonshot
+from keystone import identity
+from keystone import mapping
 
 LOG = logging.getLogger(__name__)
 
@@ -86,6 +88,8 @@ class CredentialValidator(object):
     contextes = {}
 
     def __init__(self):
+        self.org_mapping_api = mapping.controllers.OrgMappingController()
+        self.mapping_api = mapping.controllers.AttributeMappingController()
         pass
     
     def __call__(self):
@@ -98,20 +102,27 @@ class CredentialValidator(object):
         resp = {}
 
         try:
+            # Completed
+            if type(context) == dict and context['state'] == moonshot.AUTH_GSS_COMPLETE:
+                username = moonshot.authGSSServerUserName(context['context'])
+                LOG.debug('USERNAME = %s', username)
+                expires = datetime.now() + timedelta(hours=24)
+                return username, expires.isoformat(), self.getUserAttributes(username)
+
+            # Init
             if context is None:
-                result, context = moonshot.authGSSServerInit('keystone@%s' % platform.node(), '{1 3 6 1 5 5 15 1 1 18}')
+                context = {}
+                result, context['context'] = moonshot.authGSSServerInit('keystone@%s' % platform.node(), '{1 3 6 1 5 5 15 1 1 18}')
                 if result != 1:
                     raise MoonshotException('moonshot.authGSSServerInit returned result %d' % result)
+
+            # Negotiate steps
             if 'negotiation' in response:
                 if response['negotiation'] is None:
                     response['negotiation'] = ""
-                result = moonshot.authGSSServerStep(context, response['negotiation'])
-                if result == moonshot.AUTH_GSS_CONTINUE:
-                    resp = {'negotiation': moonshot.authGSSServerResponse(context)}
-                    self.setClientContext(cid, context)
-                else:
-                    LOG.debug('USERNAME = %s', moonshot.authGSSServerUserName(context))
-
+                context['state'] = moonshot.authGSSServerStep(context['context'], response['negotiation'])
+                self.setClientContext(cid, context)
+                resp = {'negotiation': moonshot.authGSSServerResponse(context['context'])}
         except moonshot.KrbError, err:
             LOG.error('Moonshot error: %r' % err)
             self.destroyClientContext(cid, context)
@@ -120,17 +131,17 @@ class CredentialValidator(object):
             self.destroyClientContext(cid, context)
         LOG.debug('Response: %r', response)
         return resp, None, None
-        # return username, expires, self.check_issuers(validatedAttributes, realm_id)
 
     def clientId(self, req):
         return req.remote_addr + '.' + req.environ['REMOTE_PORT']
 
     def setClientContext(self, cid, context):
-        CredentialValidator.contextes[cid] = {'lastUpdate': date.today(), 'context': context}
+        context['lastUpdate'] = datetime.now()
+        CredentialValidator.contextes[cid] = context
 
     def getClientContext(self, cid):
         if cid in CredentialValidator.contextes:
-            return CredentialValidator.contextes[cid]['context']
+            return CredentialValidator.contextes[cid]
         return None
 
     def destroyClientContext(self, cid=None, context=None):
@@ -139,6 +150,33 @@ class CredentialValidator(object):
                 moonshot.authGSSServerClean(CredentialValidator.contextes.pop(cid)['context'])
         if context is not None:
             moonshot.authGSSServerClean(context)
+
+    def getUserAttributes(self, username):
+        print "getUserAttributes"
+        identity_api = identity.controllers.User()
+        role_api = identity.controllers.Role()
+        tenant_api = identity.controllers.Tenant()
+        context = {'is_admin': True}
+
+        validatedAttributes = {'role': [], 'project': None}
+        user = identity_api.get_user_by_name(context, username)['user']
+
+        # Roles
+        roles = role_api.get_user_roles(context, user['id'], user['tenantId'])
+        for r in roles['roles']:
+            validatedAttributes['role'].append(r['name'])
+
+        # Tenant name
+        tenant = tenant_api.get_tenant(context, user['tenantId'])['tenant']
+        if tenant['enabled'] is True:
+            validatedAttributes['project'] = tenant['name']
+
+
+        print self.org_mapping_api.list_org_attributes(context)['org_attributes']
+        return validatedAttributes
+
+        #print roles
+
 
 def build_response(response):
     resp = webob.Response(content_type='application/json')

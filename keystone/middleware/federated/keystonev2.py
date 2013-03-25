@@ -142,7 +142,7 @@ class CredentialValidator(object):
         for r in validatedResponse['access']['user']['roles']:
             if validatedAttributes.get('role') is None:
                 validatedAttributes['role'] = []
-        validatedAttributes['role'].append(r['name'])
+            validatedAttributes['role'].append(r['name'])
         validatedAttributes['project'] = [validatedResponse['access']['token']['tenant']['name']]
         username = validatedResponse['access']['user']['name']
         expires = validatedResponse['access']['token']['expires']
