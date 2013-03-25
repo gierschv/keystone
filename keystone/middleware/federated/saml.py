@@ -176,6 +176,17 @@ class RequestIssuingService(object):
 
         return req
 
+class Negotiator(object):
+
+    def __init__(self):
+		""" do nothing """
+        raise exception.NotImplemented()
+
+    def negotiate(self, data):
+        """ do nothing """
+        raise exception.NotImplemented()
+    
+
 class CredentialValidator(object):
     
     def __init__(self):

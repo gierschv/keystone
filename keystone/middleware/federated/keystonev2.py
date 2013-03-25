@@ -92,6 +92,15 @@ class RequestIssuingService(object):
     def __call__(self):
         return None
 
+class Negotiator(object):
+
+    def __init__(self):
+        """ do nothing """
+        raise exception.NotImplemented()
+
+    def negotiate(self, data):
+        """ do nothing """
+        raise exception.NotImplemented()
 
 class CredentialValidator(object):
     
@@ -117,7 +126,6 @@ class CredentialValidator(object):
             if e['interface'] == 'public':
                 post_endpoint = e['url']+'/tokens'
         token_id = response['access']['token']['id']
-        # TODO acquire admin token to retrieve token verification
         if not cms.is_ans1_token(token_id):
             auth_req = {"auth":{}}
             auth_req["auth"]["tenantName"] = "service"
