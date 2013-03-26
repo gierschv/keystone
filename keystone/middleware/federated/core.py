@@ -111,7 +111,7 @@ class FederatedAuthentication(object):
         data = simplejson.loads(body)
 
         if 'idpResponse' in data:
-            username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])    
+            username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])
             identity_api = identity.controllers.UserV3()
             user_manager = user_management.UserManager()
             user, tempPass = user_manager.manage(username, expires)

@@ -82,22 +82,34 @@ class RequestIssuingService(object):
         return build_response(resp)
 
 class GssAPIContext(object):
-    contextes = {}
+    contexts = {}
+    def __exit__(self, type, value, traceback):
+        for cid in GssAPIContext.contexts.keys():
+            LOG.debug('Clean GSSAPI context: %s', cid)
+            self.destroyClientContext(cid)
 
     def setClientContext(self, cid, context):
-        context['lastUpdate'] = datetime.now()
-        CredentialValidator.contextes[cid] = context
+        # TODO: add to conf file
+        context['expires'] = datetime.now() + timedelta(seconds=60)
+        GssAPIContext.contexts[cid] = context
 
     def getClientContext(self, cid):
-        if cid in CredentialValidator.contextes:
-            return CredentialValidator.contextes[cid]
+        self.cleanExpiredContextes()
+        if cid in GssAPIContext.contexts:
+            return GssAPIContext.contexts[cid]
         return None
+
+    def cleanExpiredContextes(self):
+        for cid in GssAPIContext.contexts.keys():
+            if GssAPIContext.contexts[cid]['expires'] < datetime.now():
+                LOG.debug('Clean expired GSSAPI context: %s', cid)
+                self.destroyClientContext(cid)
 
     def destroyClientContext(self, cid=None, context=None, clean=True):
         try:
             if cid is not None:
-                if cid in CredentialValidator.contextes:
-                    moonshot.authGSSServerClean(CredentialValidator.contextes.pop(cid)['context'])
+                if cid in GssAPIContext.contexts:
+                    moonshot.authGSSServerClean(GssAPIContext.contexts.pop(cid)['context'])
             if context is not None:
                 moonshot.authGSSServerClean(context)
         except Exception, err:
