@@ -109,21 +109,18 @@ class FederatedAuthentication(object):
         
         body = req.body 
         data = simplejson.loads(body)
-        print data
 
         if 'idpResponse' in data:
-            username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])
-            if type(username) == dict:
-                resp = username
-            else:
-                identity_api = identity.controllers.UserV3()
-                user_manager = user_management.UserManager()
-                user, tempPass = user_manager.manage(username, expires)
-                resp = {}
-                resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
+            username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])    
+            identity_api = identity.controllers.UserV3()
+            user_manager = user_management.UserManager()
+            user, tempPass = user_manager.manage(username, expires)
+            resp = {}
+            resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
+            LOG.debug(resp)
             return valid_Response(resp)
         elif 'idpNegotiation' in data:
-			return self.negotiate(data)
+			return self.negotiate(req, data, data['realm'])
         else:
             if 'realm' in data:
                 realm_id = data['realm']
@@ -162,7 +159,7 @@ class FederatedAuthentication(object):
         cred_validator = processing_module.CredentialValidator()
         return cred_validator.validate(req, data['idpResponse'], service['id'])
 
-    def negotiate(self, data):
+    def negotiate(self, req, data, realm):
         ''' Process a negotiation between an Idp and client '''
         catalog_api = catalog.controllers.ServiceV3()
         context = {'is_admin': True}
@@ -170,21 +167,16 @@ class FederatedAuthentication(object):
         type = service["type"].split('.')[1]
         processing_module = load_protocol_module(type)
         negotiation_processor = processing_module.Negotiator()
-        return negotiation_processor(data['idpNegotiation'])
+        return negotiation_processor.negotiate(req, data['idpNegotiation'])
 
     def mapAttributes(self, data, attributes, user, password):
-        print "mapAttributes: %r %r %r %r" % (data, attributes, user, password)
-
         mapper = controllers.AttributeMappingController()
         identity_api = identity.controllers.UserV3()
         legacy_identity_api = identity.controllers.User()
         role_api = identity.controllers.RoleV3()
         project_api = identity.controllers.ProjectV3()
         context = {'is_admin': True}
-        print 'BEFORE MAPPING: %r' % attributes
         toMap = mapper.map(context, attributes=attributes)['attribute_mappings']
-        print 'MAPPED: %r' % toMap
-
         user_id = user['id']
         if user.get('expires') is not None:
             user.pop("expires")

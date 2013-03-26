@@ -59,6 +59,7 @@ import platform
 import moonshot
 from keystone import identity
 from keystone import mapping
+from keystone import exception
 
 LOG = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class RequestIssuingService(object):
     def getIdPRequest(self, key, issuer, endpoint):
         LOG.info('IssueRequest')
         resp = {
-            'idpRequest': {'negotiation': ''},
+            'idpRequest': None,
             'idpEndpoint': {
                 'mechanism': '{1 3 6 1 5 5 15 1 1 18}',
                 'serviceName': 'keystone@%s' % platform.node()
@@ -80,13 +81,64 @@ class RequestIssuingService(object):
         }
         return build_response(resp)
 
+class GssAPIContext(object):
+    contextes = {}
+
+    def setClientContext(self, cid, context):
+        context['lastUpdate'] = datetime.now()
+        CredentialValidator.contextes[cid] = context
+
+    def getClientContext(self, cid):
+        if cid in CredentialValidator.contextes:
+            return CredentialValidator.contextes[cid]
+        return None
+
+    def destroyClientContext(self, cid=None, context=None, clean=True):
+        try:
+            if cid is not None:
+                if cid in CredentialValidator.contextes:
+                    moonshot.authGSSServerClean(CredentialValidator.contextes.pop(cid)['context'])
+            if context is not None:
+                moonshot.authGSSServerClean(context)
+        except Exception, err:
+            LOG.error('GSS clean error: %s' % err)
+
+    def clientId(self, req):
+        return req.remote_addr + '.' + req.environ['REMOTE_PORT']
+
 class MoonshotException(Exception):
     pass
 
 # TODO: timeout ctx
-class CredentialValidator(object):
-    contextes = {}
+class Negotiator(GssAPIContext):
+    def __init__(self):
+        pass
 
+    def negotiate(self, req, data):
+        cid = self.clientId(req)
+        context = self.getClientContext(cid)
+        resp = {'idpNegotiation': None}
+
+        try:
+            # Init
+            if context is None:
+                context = {}
+                result, context['context'] = moonshot.authGSSServerInit('keystone@%s' % platform.node(), '{1 3 6 1 5 5 15 1 1 18}')
+                if result != 1:
+                    raise MoonshotException('moonshot.authGSSServerInit returned result %d' % result)
+
+            # Negotiate steps
+            context['state'] = moonshot.authGSSServerStep(context['context'], data)
+            self.setClientContext(cid, context)
+            resp = {'idpNegotiation': moonshot.authGSSServerResponse(context['context'])}
+        except (moonshot.KrbError, MoonshotException), err:
+            LOG.error(err)
+            self.destroyClientContext(cid, context)
+            raise exception.CredentialNotFound()
+        return build_response(resp)
+
+
+class CredentialValidator(GssAPIContext):
     def __init__(self):
         self.org_mapping_api = mapping.controllers.OrgMappingController()
         self.mapping_api = mapping.controllers.AttributeMappingController()
@@ -99,57 +151,17 @@ class CredentialValidator(object):
         LOG.debug("CredentialValidator/validate")
         cid = self.clientId(req)
         context = self.getClientContext(cid)
-        resp = {}
 
         try:
-            # Completed
             if type(context) == dict and context['state'] == moonshot.AUTH_GSS_COMPLETE:
                 username = moonshot.authGSSServerUserName(context['context'])
                 LOG.debug('USERNAME = %s', username)
                 expires = datetime.now() + timedelta(hours=24)
                 return username, expires.isoformat(), self.getUserAttributes(username)
-
-            # Init
-            if context is None:
-                context = {}
-                result, context['context'] = moonshot.authGSSServerInit('keystone@%s' % platform.node(), '{1 3 6 1 5 5 15 1 1 18}')
-                if result != 1:
-                    raise MoonshotException('moonshot.authGSSServerInit returned result %d' % result)
-
-            # Negotiate steps
-            if 'negotiation' in response:
-                if response['negotiation'] is None:
-                    response['negotiation'] = ""
-                context['state'] = moonshot.authGSSServerStep(context['context'], response['negotiation'])
-                self.setClientContext(cid, context)
-                resp = {'negotiation': moonshot.authGSSServerResponse(context['context'])}
-        except moonshot.KrbError, err:
-            LOG.error('Moonshot error: %r' % err)
-            self.destroyClientContext(cid, context)
-        except MoonshotException, err:
+        except (moonshot.KrbError, MoonshotException), err:
             LOG.error(err)
             self.destroyClientContext(cid, context)
-        LOG.debug('Response: %r', response)
-        return resp, None, None
-
-    def clientId(self, req):
-        return req.remote_addr + '.' + req.environ['REMOTE_PORT']
-
-    def setClientContext(self, cid, context):
-        context['lastUpdate'] = datetime.now()
-        CredentialValidator.contextes[cid] = context
-
-    def getClientContext(self, cid):
-        if cid in CredentialValidator.contextes:
-            return CredentialValidator.contextes[cid]
-        return None
-
-    def destroyClientContext(self, cid=None, context=None):
-        if cid is not None:
-            if cid in CredentialValidator.contextes:
-                moonshot.authGSSServerClean(CredentialValidator.contextes.pop(cid)['context'])
-        if context is not None:
-            moonshot.authGSSServerClean(context)
+        raise exception.CredentialNotFound()
 
     def getUserAttributes(self, username):
         print "getUserAttributes"
@@ -182,4 +194,3 @@ def build_response(response):
     resp = webob.Response(content_type='application/json')
     resp.body = json.dumps(response)
     return resp
-
