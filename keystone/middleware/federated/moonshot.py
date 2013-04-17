@@ -52,16 +52,19 @@ Created on 8 March 2013
 
 import logging
 from datetime import date, datetime, timedelta
+
 import webob.dec
 import webob.exc
 import json
 import platform
 import moonshot
+
 from keystone import identity
 from keystone import mapping
 from keystone import exception
 
 LOG = logging.getLogger(__name__)
+
 
 class RequestIssuingService(object):
     def __init__(self):
@@ -80,6 +83,7 @@ class RequestIssuingService(object):
             }
         }
         return build_response(resp)
+
 
 class GssAPIContext(object):
     contexts = {}
@@ -118,8 +122,10 @@ class GssAPIContext(object):
     def clientId(self, req):
         return req.remote_addr + '.' + req.environ['REMOTE_PORT']
 
+
 class MoonshotException(Exception):
     pass
+
 
 # TODO: timeout ctx
 class Negotiator(GssAPIContext):
@@ -145,7 +151,7 @@ class Negotiator(GssAPIContext):
             resp = {'idpNegotiation': moonshot.authGSSServerResponse(context['context'])}
         except (moonshot.KrbError, MoonshotException), err:
             LOG.error(err)
-            self.destroyClientContext(cid, context)
+            self.destroyClientContext(cid, context['context'])
             raise exception.CredentialNotFound()
         return build_response(resp)
 
@@ -168,11 +174,14 @@ class CredentialValidator(GssAPIContext):
             if type(context) == dict and context['state'] == moonshot.AUTH_GSS_COMPLETE:
                 username = moonshot.authGSSServerUserName(context['context'])
                 LOG.debug('USERNAME = %s', username)
+
+                LOG.debug('ATTRS = %r', moonshot.authGSSServerAttributes(context['context']))
                 expires = datetime.now() + timedelta(hours=24)
+                self.destroyClientContext(cid, context['context'])
                 return username, expires.isoformat(), self.getUserAttributes(username)
         except (moonshot.KrbError, MoonshotException), err:
             LOG.error(err)
-            self.destroyClientContext(cid, context)
+            self.destroyClientContext(cid, context['context'])
         raise exception.CredentialNotFound()
 
     def getUserAttributes(self, username):
