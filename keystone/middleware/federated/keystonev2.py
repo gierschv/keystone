@@ -118,6 +118,7 @@ class CredentialValidator(object):
         context['query_string'] = {}
         context['query_string']['service_id'] = realm_id
         context['interface'] = 'adminurl'
+        context['path'] = ""
         endpoints = catalog_api.list_endpoints(context)
         for e in endpoints['endpoints']:
             creds = e["creds"]
@@ -186,18 +187,13 @@ class CredentialValidator(object):
                for org_att in org_atts:
                    if org_att['type'] == att:
                        if org_att['value'] == val or org_att['value'] is None:
-                           print org_att['id']
-                           print org_att
-                           print att+"  "+val
                            try:
                                self.org_mapping_api.check_attribute_can_be_issued(context, service_id=realm_id, org_attribute_id=org_att['id'])
-                               print att+"="+val+" can be issued"
                                if valid_atts.get(att) is None:
                                    valid_atts[att] = [val]
                                else:
                                    valid_atts[att].append(val)
                            except exception.NotFound:
-                               print att+"="+val+" cannot be issued by "+str(realm_id)
                                pass
         return valid_atts
 

@@ -192,39 +192,25 @@ class AttributeMappingController(controller.V3Controller):
         for att in attributes:
            for val in attributes[att]:
                org_atts = org_mapping_api.list_org_attributes(context)['org_attributes']
-               LOG.debug("The retrieved Org Atts are:")
-               LOG.debug(org_atts)
                for org_att in org_atts:
                    if org_att['type'] == att:
                        if org_att['value'] == val or org_att['value'] is None:
                            if not org_att['id'] in att_ids:
                                att_ids.append(org_att['id'])
         matched_sets = []
-        LOG.debug("User's Org Atts are: ")
-        LOG.debug(att_ids)
         for a_id in att_ids:
             set_ids = self.mapping_api.list_org_sets_containing_attribute(context, org_attribute_id=a_id)
-            LOG.debug("The sets are for a_id are: ")
-            LOG.debug(set_ids)
             for  s in set_ids:
                 all_atts = [ss['id'] for ss in self.mapping_api.list_attributes_in_org_set(context, org_attribute_set_id=s['id'])]
-                LOG.debug("The attributes in this set are: ")
-                LOG.debug(all_atts)
                 if set(all_atts) <= set(att_ids):
-                    LOG.debug(att_ids)
-                    LOG.debug(" CONTAINS ")
-                    LOG.debug(all_atts)
                     if not s['id'] in matched_sets:
                         matched_sets.append(s['id'])
         all_mappings = self.list_attribute_mappings(context)['attribute_mappings']
-        valid_mappings = {}
+        valid_mappings = []
         for m in matched_sets:
             for am in all_mappings:
                 if am['org_attribute_set']['id'] == m:
-                    for y in am['os_attribute_set']['attributes']:
-                        valid_mappings.update(y)
-        print "MATCHED VALID SETS!!!!!!!!!!!!!"
-        print valid_mappings
+                    valid_mappings.append(am['os_attribute_set']['attributes'])
         return {'attribute_mappings': valid_mappings}
 
 class OrgMappingController(controller.V3Controller):
@@ -263,7 +249,6 @@ class OrgMappingController(controller.V3Controller):
 
     @controller.protected
     def create_org_attribute_set(self, context, org_attribute_set):
-        LOG.debug("Creating set: " + str(org_attribute_set))
         self.assert_admin(context)
         set_id = uuid.uuid4().hex
         set_ref = org_attribute_set.copy()

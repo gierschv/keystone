@@ -85,15 +85,14 @@ class S3Token(object):
 
     def _json_request(self, creds_json):
         headers = {'Content-Type': 'application/json'}
-
+        if self.auth_protocol == 'http':
+            conn = self.http_client_class(self.auth_host, self.auth_port)
+        else:
+            conn = self.http_client_class(self.auth_host,
+                                          self.auth_port,
+                                          self.key_file,
+                                          self.cert_file)
         try:
-            if self.auth_protocol == 'http':
-                conn = self.http_client_class(self.auth_host, self.auth_port)
-            else:
-                conn = self.http_client_class(self.auth_host,
-                                              self.auth_port,
-                                              self.key_file,
-                                              self.cert_file)
             conn.request('POST', '/v2.0/s3tokens',
                          body=creds_json,
                          headers=headers)
@@ -128,7 +127,7 @@ class S3Token(object):
             return self.app(environ, start_response)
 
         # Read request signature and access id.
-        if not 'Authorization' in req.headers:
+        if 'Authorization' not in req.headers:
             msg = 'No Authorization header. skipping.'
             self.logger.debug(msg)
             return self.app(environ, start_response)
@@ -177,7 +176,7 @@ class S3Token(object):
         # NOTE(chmou): We still have the same problem we would need to
         #              change token_auth to detect if we already
         #              identified and not doing a second query and just
-        #              pass it thru to swiftauth in this case.
+        #              pass it through to swiftauth in this case.
         try:
             resp, output = self._json_request(creds_json)
         except ServiceError as e:

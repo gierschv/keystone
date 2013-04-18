@@ -29,7 +29,9 @@ LOG = logging.getLogger(__name__)
 
 
 def filter_user(user_ref):
-    """Filter out private items in a user dict ('password' and 'tenants')
+    """Filter out private items in a user dict.
+
+    'password', 'tenants' and 'groups' are never returned.
 
     :returns: user_ref
 
@@ -39,6 +41,7 @@ def filter_user(user_ref):
         user_ref.pop('password', None)
         user_ref.pop('tenants', None)
         user_ref.pop('groups', None)
+        user_ref.pop('domains', None)
         try:
             user_ref['extra'].pop('password', None)
             user_ref['extra'].pop('tenants', None)
@@ -59,6 +62,26 @@ class Manager(manager.Manager):
     def __init__(self):
         super(Manager, self).__init__(CONF.identity.driver)
 
+    def create_user(self, context, user_id, user_ref):
+        user = user_ref.copy()
+        if 'enabled' not in user:
+            user['enabled'] = True
+        return self.driver.create_user(user_id, user)
+
+    def create_group(self, context, group_id, group_ref):
+        group = group_ref.copy()
+        if 'description' not in group:
+            group['description'] = ''
+        return self.driver.create_group(group_id, group)
+
+    def create_project(self, context, tenant_id, tenant_ref):
+        tenant = tenant_ref.copy()
+        if 'enabled' not in tenant:
+            tenant['enabled'] = True
+        if 'description' not in tenant:
+            tenant['description'] = ''
+        return self.driver.create_project(tenant_id, tenant)
+
 
 class Driver(object):
     """Interface description for an Identity driver."""
@@ -72,25 +95,25 @@ class Driver(object):
         """
         raise exception.NotImplemented()
 
-    def get_tenant(self, tenant_id):
+    def get_project(self, tenant_id):
         """Get a tenant by id.
 
         :returns: tenant_ref
-        :raises: keystone.exception.TenantNotFound
+        :raises: keystone.exception.ProjectNotFound
 
         """
         raise exception.NotImplemented()
 
-    def get_tenant_by_name(self, tenant_name):
+    def get_project_by_name(self, tenant_name, domain_id):
         """Get a tenant by name.
 
         :returns: tenant_ref
-        :raises: keystone.exception.TenantNotFound
+        :raises: keystone.exception.ProjectNotFound
 
         """
         raise exception.NotImplemented()
 
-    def get_user_by_name(self, user_name):
+    def get_user_by_name(self, user_name, domain_id):
         """Get a user by name.
 
         :returns: user_ref
@@ -99,47 +122,40 @@ class Driver(object):
         """
         raise exception.NotImplemented()
 
-    def add_user_to_tenant(self, tenant_id, user_id):
-        """Add user to a tenant without an explicit role relationship.
+    def add_user_to_project(self, tenant_id, user_id):
+        """Add user to a tenant by creating a default role relationship.
 
-        :raises: keystone.exception.TenantNotFound,
+        :raises: keystone.exception.ProjectNotFound,
                  keystone.exception.UserNotFound
 
         """
-        raise exception.NotImplemented()
+        self.add_role_to_user_and_project(user_id,
+                                          tenant_id,
+                                          config.CONF.member_role_id)
 
-    def remove_user_from_tenant(self, tenant_id, user_id):
-        """Remove user from a tenant without an explicit role relationship.
+    def remove_user_from_project(self, tenant_id, user_id):
+        """Remove user from a tenant
 
-        :raises: keystone.exception.TenantNotFound,
+        :raises: keystone.exception.ProjectNotFound,
                  keystone.exception.UserNotFound
 
         """
-        raise exception.NotImplemented()
+        roles = self.get_roles_for_user_and_project(user_id, tenant_id)
+        if not roles:
+            raise exception.NotFound(tenant_id)
+        for role_id in roles:
+            self.remove_role_from_user_and_project(user_id, tenant_id, role_id)
 
-    def get_all_tenants(self):
-        """FIXME(dolph): Lists all tenants in the system? I'm not sure how this
-                         is different from get_tenants, why get_tenants isn't
-                         documented as part of the driver, or why it's called
-                         get_tenants instead of list_tenants (i.e. list_roles
-                         and list_users)...
+    def get_project_users(self, tenant_id):
+        """Lists all users with a relationship to the specified project.
 
-        :returns: a list of ... FIXME(dolph): tenant_refs or tenant_id's?
-
-        """
-        raise exception.NotImplemented()
-
-    def get_tenant_users(self, tenant_id):
-        """FIXME(dolph): Lists all users with a relationship to the specified
-                         tenant?
-
-        :returns: a list of ... FIXME(dolph): user_refs or user_id's?
-        :raises: keystone.exception.UserNotFound
+        :returns: a list of user_refs or an empty set.
+        :raises: keystone.exception.ProjectNotFound
 
         """
         raise exception.NotImplemented()
 
-    def get_tenants_for_user(self, user_id):
+    def get_projects_for_user(self, user_id):
         """Get the tenants associated with a given user.
 
         :returns: a list of tenant_id's.
@@ -148,37 +164,75 @@ class Driver(object):
         """
         raise exception.NotImplemented()
 
-    def get_roles_for_user_and_tenant(self, user_id, tenant_id):
+    def get_roles_for_user_and_project(self, user_id, tenant_id):
         """Get the roles associated with a user within given tenant.
 
         :returns: a list of role ids.
         :raises: keystone.exception.UserNotFound,
-                 keystone.exception.TenantNotFound
+                 keystone.exception.ProjectNotFound
 
         """
         raise exception.NotImplemented()
 
-    def add_role_to_user_and_tenant(self, user_id, tenant_id, role_id):
+    def get_roles_for_user_and_domain(self, user_id, domain_id):
+        """Get the roles associated with a user within given domain.
+
+        :returns: a list of role ids.
+        :raises: keystone.exception.UserNotFound,
+                 keystone.exception.ProjectNotFound
+
+        """
+
+        def update_metadata_for_group_domain_roles(self, metadata_ref,
+                                                   user_id, domain_id):
+            group_refs = self.list_groups_for_user(user_id=user_id)
+            for x in group_refs:
+                try:
+                    metadata_ref.update(
+                        self.get_metadata(group_id=x['id'],
+                                          domain_id=domain_id))
+                except exception.MetadataNotFound:
+                    # no group grant, skip
+                    pass
+
+        def update_metadata_for_user_domain_roles(self, metadata_ref,
+                                                  user_id, domain_id):
+            try:
+                metadata_ref.update(self.get_metadata(user_id=user_id,
+                                                      domain_id=domain_id))
+            except exception.MetadataNotFound:
+                pass
+
+        self.get_user(user_id)
+        self.get_domain(domain_id)
+        metadata_ref = {}
+        update_metadata_for_user_domain_roles(self, metadata_ref,
+                                              user_id, domain_id)
+        update_metadata_for_group_domain_roles(self, metadata_ref,
+                                               user_id, domain_id)
+        return list(set(metadata_ref.get('roles', [])))
+
+    def add_role_to_user_and_project(self, user_id, tenant_id, role_id):
         """Add a role to a user within given tenant.
 
         :raises: keystone.exception.UserNotFound,
-                 keystone.exception.TenantNotFound,
+                 keystone.exception.ProjectNotFound,
                  keystone.exception.RoleNotFound
         """
         raise exception.NotImplemented()
 
-    def remove_role_from_user_and_tenant(self, user_id, tenant_id, role_id):
+    def remove_role_from_user_and_project(self, user_id, tenant_id, role_id):
         """Remove a role from a user within given tenant.
 
         :raises: keystone.exception.UserNotFound,
-                 keystone.exception.TenantNotFound,
+                 keystone.exception.ProjectNotFound,
                  keystone.exception.RoleNotFound
 
         """
         raise exception.NotImplemented()
 
     # tenant crud
-    def create_tenant(self, tenant_id, tenant):
+    def create_project(self, tenant_id, tenant):
         """Creates a new tenant.
 
         :raises: keystone.exception.Conflict
@@ -186,18 +240,19 @@ class Driver(object):
         """
         raise exception.NotImplemented()
 
-    def update_tenant(self, tenant_id, tenant):
+    def update_project(self, tenant_id, tenant):
         """Updates an existing tenant.
 
-        :raises: keystone.exception.TenantNotFound, keystone.exception.Conflict
+        :raises: keystone.exception.ProjectNotFound,
+                 keystone.exception.Conflict
 
         """
         raise exception.NotImplemented()
 
-    def delete_tenant(self, tenant_id):
+    def delete_project(self, tenant_id):
         """Deletes an existing tenant.
 
-        :raises: keystone.exception.TenantNotFound
+        :raises: keystone.exception.ProjectNotFound
 
         """
         raise exception.NotImplemented()
@@ -251,7 +306,16 @@ class Driver(object):
     def get_domain(self, domain_id):
         """Get a domain by ID.
 
-        :returns: user_ref
+        :returns: domain_ref
+        :raises: keystone.exception.DomainNotFound
+
+        """
+        raise exception.NotImplemented()
+
+    def get_domain_by_name(self, domain_name):
+        """Get a domain by name.
+
+        :returns: domain_ref
         :raises: keystone.exception.DomainNotFound
 
         """
@@ -285,6 +349,14 @@ class Driver(object):
 
     def list_projects(self):
         """List all projects in the system.
+
+        :returns: a list of project_refs or an empty list.
+
+        """
+        raise exception.NotImplemented()
+
+    def list_user_projects(self, user_id):
+        """List all projects associated with a given user.
 
         :returns: a list of project_refs or an empty list.
 
@@ -335,7 +407,7 @@ class Driver(object):
         """
         raise exception.NotImplemented()
 
-    def list_users_in_group(self, group_id, group):
+    def list_users_in_group(self, group_id):
         """List all users in a group.
 
         :returns: a list of user_refs or an empty list.
@@ -501,7 +573,7 @@ class Driver(object):
         """
         raise exception.NotImplemented()
 
-    def list_groups_for_user(self, user_id, user):
+    def list_groups_for_user(self, user_id):
         """List all groups a user is in
 
         :returns: a list of group_refs or an empty list.

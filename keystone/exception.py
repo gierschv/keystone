@@ -15,12 +15,15 @@
 # under the License.
 import re
 
+from keystone.common import config
 from keystone.common import logging
-from keystone import config
 
 
 CONF = config.CONF
 LOG = logging.getLogger(__name__)
+
+# Tests use this to make exception message format errors fatal
+_FATAL_EXCEPTION_FORMAT_ERRORS = False
 
 
 class Error(StandardError):
@@ -37,10 +40,13 @@ class Error(StandardError):
 
         try:
             message = self._build_message(message, **kwargs)
-        except KeyError:
+        except KeyError as e:
             # if you see this warning in your logs, please raise a bug report
-            LOG.warning('missing expected exception kwargs (programmer error)')
-            message = self.__doc__
+            if _FATAL_EXCEPTION_FORMAT_ERRORS:
+                raise e
+            else:
+                LOG.warning('missing exception kwargs (programmer error)')
+                message = self.__doc__
 
         super(Error, self).__init__(message)
 
@@ -73,6 +79,24 @@ class ValidationError(Error):
     title = 'Bad Request'
 
 
+class StringLengthExceeded(ValidationError):
+    """The length of string "%(string)s" exceeded the limit of column
+    %(type)s(CHAR(%(length)d))."""
+
+
+class ValidationSizeError(Error):
+    """Request attribute %(attribute)s must be less than or equal to %(size)i.
+
+    The server could not comply with the request because the attribute
+    size is invalid (too large).
+
+    The client is assumed to be in error.
+
+    """
+    code = 400
+    title = 'Bad Request'
+
+
 class SecurityError(Error):
     """Avoids exposing details of security failures, unless in debug mode."""
 
@@ -87,7 +111,31 @@ class SecurityError(Error):
 class Unauthorized(SecurityError):
     """The request you have made requires authentication."""
     code = 401
-    title = 'Not Authorized'
+    title = 'Unauthorized'
+
+
+class AuthPluginException(Unauthorized):
+    """ Authentication plugin error. """
+
+    def __init__(self, *args, **kwargs):
+        super(AuthPluginException, self).__init__(*args, **kwargs)
+        self.authentication = {}
+
+
+class AuthMethodNotSupported(AuthPluginException):
+    """ Attempted to authenticate with an unsupported method. """
+
+    def __init__(self, *args, **kwargs):
+        super(AuthMethodNotSupported, self).__init__(*args, **kwargs)
+        self.authentication = {'methods': CONF.auth.methods}
+
+
+class AdditionalAuthRequired(AuthPluginException):
+    """ Additional authentications steps required. """
+
+    def __init__(self, auth_response=None, **kwargs):
+        super(AdditionalAuthRequired, self).__init__(message=None, **kwargs)
+        self.authentication = auth_response
 
 
 class Forbidden(SecurityError):
@@ -132,11 +180,7 @@ class DomainNotFound(NotFound):
     """Could not find domain: %(domain_id)s"""
 
 
-class TenantNotFound(NotFound):
-    """Could not find tenant: %(tenant_id)s"""
-
-
-class ProjectNotFound(TenantNotFound):
+class ProjectNotFound(NotFound):
     """Could not find project: %(project_id)s"""
 
 
@@ -152,6 +196,18 @@ class GroupNotFound(NotFound):
     """Could not find group: %(group_id)s"""
 
 
+class TrustNotFound(NotFound):
+    """Could not find trust: %(trust_id)s"""
+
+
+class CredentialNotFound(NotFound):
+    """Could not find credential: %(credential_id)s"""
+
+
+class VersionNotFound(NotFound):
+    """Could not find version: %(version)s"""
+
+
 class Conflict(Error):
     """Conflict occurred attempting to store %(type)s.
 
@@ -160,6 +216,12 @@ class Conflict(Error):
     """
     code = 409
     title = 'Conflict'
+
+
+class RequestTooLarge(Error):
+    """Request is too large."""
+    code = 413
+    title = 'Request is too large.'
 
 
 class UnexpectedError(Error):

@@ -42,6 +42,7 @@ class Token(Model):
         user
         tenant
         metadata
+        trust_id
     """
 
     required_keys = ('id', 'expires')
@@ -87,6 +88,7 @@ class User(Model):
     Required keys:
         id
         name
+        domain_id
 
     Optional keys:
         password
@@ -96,8 +98,10 @@ class User(Model):
         enabled (bool, default True)
     """
 
-    required_keys = ('id', 'name')
-    optional_keys = ('password', 'description', 'email', 'expires', 'enabled')
+
+    required_keys = ('id', 'name', 'domain_id')
+    optional_keys = ('password', 'description', 'expires', 'email', 'enabled')
+
 
 
 class Group(Model):
@@ -106,23 +110,25 @@ class Group(Model):
     Required keys:
         id
         name
+        domain_id
 
     Optional keys:
-        domain_id
+
         description
 
     """
 
-    required_keys = ('id', 'name')
-    optional_keys = ('domain_id', 'description')
+    required_keys = ('id', 'name', 'domain_id')
+    optional_keys = ('description',)
 
 
-class Tenant(Model):
-    """Tenant object.
+class Project(Model):
+    """Project object.
 
     Required keys:
         id
         name
+        domain_id
 
     Optional Keys:
         description
@@ -130,7 +136,7 @@ class Tenant(Model):
 
     """
 
-    required_keys = ('id', 'name')
+    required_keys = ('id', 'name', 'domain_id')
     optional_keys = ('description', 'enabled')
 
 
@@ -145,3 +151,35 @@ class Role(Model):
 
     required_keys = ('id', 'name')
     optional_keys = tuple()
+
+
+class Trust(Model):
+    """Trust object.
+
+    Required keys:
+        id
+        trustor_user_id
+        trustee_user_id
+        project_id
+    """
+
+    required_keys = ('id', 'trustor_user_id', 'trustee_user_id', 'project_id')
+    optional_keys = tuple('expires_at')
+
+
+class Domain(Model):
+    """Domain object.
+
+    Required keys:
+        id
+        name
+
+    Optional keys:
+
+        description
+        enabled (bool, default True)
+
+    """
+
+    required_keys = ('id', 'name')
+    optional_keys = ('description', 'enabled')

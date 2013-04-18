@@ -186,27 +186,27 @@ class CredentialValidator(GssAPIContext):
 
     def getUserAttributes(self, username):
         print "getUserAttributes"
-        identity_api = identity.controllers.User()
-        role_api = identity.controllers.Role()
-        tenant_api = identity.controllers.Tenant()
-        context = {'is_admin': True}
+        # identity_api = identity.controllers.User()
+        # role_api = identity.controllers.Role()
+        # tenant_api = identity.controllers.Tenant()
+        # context = {'is_admin': True}
 
-        validatedAttributes = {'role': [], 'project': None}
-        user = identity_api.get_user_by_name(context, username)['user']
+        # validatedAttributes = {'role': [], 'project': None}
+        # user = identity_api.get_user_by_name(context, username)['user']
 
-        # Roles
-        roles = role_api.get_user_roles(context, user['id'], user['tenantId'])
-        for r in roles['roles']:
-            validatedAttributes['role'].append(r['name'])
+        # # Roles
+        # roles = role_api.get_user_roles(context, user['id'], user['tenantId'])
+        # for r in roles['roles']:
+        #     validatedAttributes['role'].append(r['name'])
 
-        # Tenant name
-        tenant = tenant_api.get_tenant(context, user['tenantId'])['tenant']
-        if tenant['enabled'] is True:
-            validatedAttributes['project'] = tenant['name']
+        # # Tenant name
+        # tenant = tenant_api.get_tenant(context, user['tenantId'])['tenant']
+        # if tenant['enabled'] is True:
+        #     validatedAttributes['project'] = tenant['name']
 
 
-        print self.org_mapping_api.list_org_attributes(context)['org_attributes']
-        return validatedAttributes
+        # print self.org_mapping_api.list_org_attributes(context)['org_attributes']
+        # return validatedAttributes
 
         #print roles
 

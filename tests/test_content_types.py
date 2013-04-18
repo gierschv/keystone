@@ -73,7 +73,7 @@ class RestfulTestCase(test.TestCase):
         self.metadata_foobar = self.identity_api.update_metadata(
             self.user_foo['id'],
             self.tenant_bar['id'],
-            dict(roles=['keystone_admin'], is_admin='1'))
+            dict(roles=[self.role_admin['id']], is_admin='1'))
 
     def tearDown(self):
         """Kill running servers and release references to avoid leaks."""
@@ -90,7 +90,7 @@ class RestfulTestCase(test.TestCase):
         # Initialize headers dictionary
         headers = {} if not headers else headers
 
-        connection = httplib.HTTPConnection(host, port, timeout=10)
+        connection = httplib.HTTPConnection(host, port, timeout=100000)
 
         # Perform the request
         connection.request(method, path, body, headers)
@@ -173,14 +173,15 @@ class RestfulTestCase(test.TestCase):
         if response.body is not None and response.body.strip():
             # if a body is provided, a Content-Type is also expected
             header = response.getheader('Content-Type', None)
-            self.assertIn(self.content_type, header)
+            self.assertIn(content_type, header)
 
-            if self.content_type == 'json':
+            if content_type == 'json':
                 response.body = jsonutils.loads(response.body)
-            elif self.content_type == 'xml':
+            elif content_type == 'xml':
                 response.body = etree.fromstring(response.body)
 
-    def restful_request(self, headers=None, body=None, token=None, **kwargs):
+    def restful_request(self, method='GET', headers=None, body=None,
+                        token=None, content_type=None, **kwargs):
         """Serializes/deserializes json/xml as request/response body.
 
         .. WARNING::
@@ -195,15 +196,16 @@ class RestfulTestCase(test.TestCase):
         if token is not None:
             headers['X-Auth-Token'] = token
 
-        body = self._to_content_type(body, headers)
+        body = self._to_content_type(body, headers, content_type)
 
         # Perform the HTTP request/response
-        response = self.request(headers=headers, body=body, **kwargs)
+        response = self.request(method=method, headers=headers, body=body,
+                                **kwargs)
 
-        self._from_content_type(response)
+        self._from_content_type(response, content_type)
 
         # we can save some code & improve coverage by always doing this
-        if response.status >= 400:
+        if method != 'HEAD' and response.status >= 400:
             self.assertValidErrorResponse(response)
 
         # Contains the decoded response.body
@@ -266,7 +268,7 @@ class CoreApiTests(object):
         """Applicable to XML and JSON.
 
         However, navigating links and media-types differs between content
-        types so they need to be validated seperately.
+        types so they need to be validated separately.
 
         """
         self.assertIsNotNone(version)
@@ -278,7 +280,7 @@ class CoreApiTests(object):
         """Applicable to XML and JSON.
 
         However, navigating extension links differs between content types.
-        They need to be validated seperately with assertValidExtensionLink.
+        They need to be validated separately with assertValidExtensionLink.
 
         """
         self.assertIsNotNone(extension)
@@ -371,9 +373,8 @@ class CoreApiTests(object):
                     'tenantId': self.tenant_bar['id'],
                 },
             },
-            # TODO(dolph): creating a token should result in a 201 Created
             expected_status=200)
-        self.assertValidAuthenticationResponse(r)
+        self.assertValidAuthenticationResponse(r, require_service_catalog=True)
 
     def test_authenticate_unscoped(self):
         r = self.public_request(
@@ -387,7 +388,6 @@ class CoreApiTests(object):
                     },
                 },
             },
-            # TODO(dolph): creating a token should result in a 201 Created
             expected_status=200)
         self.assertValidAuthenticationResponse(r)
 
@@ -410,15 +410,13 @@ class CoreApiTests(object):
         path = ('/v2.0/tokens/%s?belongsTo=%s' % (token,
                                                   self.tenant_bar['id']))
         r = self.admin_request(path=path, token=token)
-        self.assertValidAuthenticationResponse(r,
-                                               require_service_catalog=True)
+        self.assertValidAuthenticationResponse(r, require_service_catalog=True)
 
     def test_validate_token_no_belongs_to_still_returns_catalog(self):
         token = self.get_scoped_token()
         path = ('/v2.0/tokens/%s' % token)
         r = self.admin_request(path=path, token=token)
-        self.assertValidAuthenticationResponse(r,
-                                               require_service_catalog=True)
+        self.assertValidAuthenticationResponse(r, require_service_catalog=True)
 
     def test_validate_token_head(self):
         """The same call as above, except using HEAD.
@@ -506,6 +504,27 @@ class CoreApiTests(object):
         """This triggers assertValidErrorResponse by convention."""
         self.public_request(path='/v2.0/tenants', expected_status=401)
 
+    def test_invalid_parameter_error_response(self):
+        token = self.get_scoped_token()
+        bad_body = {
+            'OS-KSADM:service%s' % uuid.uuid4().hex: {
+                'name': uuid.uuid4().hex,
+                'type': uuid.uuid4().hex,
+            },
+        }
+        res = self.admin_request(method='POST',
+                                 path='/v2.0/OS-KSADM/services',
+                                 body=bad_body,
+                                 token=token,
+                                 expected_status=400)
+        self.assertValidErrorResponse(res)
+        res = self.admin_request(method='POST',
+                                 path='/v2.0/users',
+                                 body=bad_body,
+                                 token=token,
+                                 expected_status=400)
+        self.assertValidErrorResponse(res)
+
 
 class JsonTestCase(RestfulTestCase, CoreApiTests):
     content_type = 'json'
@@ -557,12 +576,21 @@ class JsonTestCase(RestfulTestCase, CoreApiTests):
         self.assertIsNotNone(r.body['access']['user'].get('id'))
         self.assertIsNotNone(r.body['access']['user'].get('name'))
 
+        if require_service_catalog:
+            # roles are only provided with a service catalog
+            roles = r.body['access']['user'].get('roles')
+            self.assertTrue(len(roles))
+            for role in roles:
+                self.assertIsNotNone(role.get('name'))
+
         serviceCatalog = r.body['access'].get('serviceCatalog')
         # validate service catalog
         if require_service_catalog:
             self.assertIsNotNone(serviceCatalog)
         if serviceCatalog is not None:
             self.assertTrue(isinstance(serviceCatalog, list))
+            if require_service_catalog:
+                self.assertTrue(len(serviceCatalog))
             for service in r.body['access']['serviceCatalog']:
                 # validate service
                 self.assertIsNotNone(service.get('name'))
@@ -719,8 +747,9 @@ class XmlTestCase(RestfulTestCase, CoreApiTests):
 
         self.assertIsNotNone(extension.find(self._tag('description')))
         self.assertTrue(extension.find(self._tag('description')).text)
-        self.assertTrue(len(extension.findall(self._tag('link'))))
-        for link in extension.findall(self._tag('link')):
+        links = extension.find(self._tag('links'))
+        self.assertTrue(len(links.findall(self._tag('link'))))
+        for link in links.findall(self._tag('link')):
             self.assertValidExtensionLink(link)
 
     def assertValidExtensionListResponse(self, r):
@@ -740,8 +769,10 @@ class XmlTestCase(RestfulTestCase, CoreApiTests):
     def assertValidVersion(self, version):
         super(XmlTestCase, self).assertValidVersion(version)
 
-        self.assertTrue(len(version.findall(self._tag('link'))))
-        for link in version.findall(self._tag('link')):
+        links = version.find(self._tag('links'))
+        self.assertIsNotNone(links)
+        self.assertTrue(len(links.findall(self._tag('link'))))
+        for link in links.findall(self._tag('link')):
             self.assertIsNotNone(link.get('rel'))
             self.assertIsNotNone(link.get('href'))
 
@@ -820,19 +851,30 @@ class XmlTestCase(RestfulTestCase, CoreApiTests):
         self.assertIsNotNone(user.get('id'))
         self.assertIsNotNone(user.get('name'))
 
+        if require_service_catalog:
+            # roles are only provided with a service catalog
+            roles = user.findall(self._tag('role'))
+            self.assertTrue(len(roles))
+            for role in roles:
+                self.assertIsNotNone(role.get('name'))
+
         serviceCatalog = xml.find(self._tag('serviceCatalog'))
         # validate the serviceCatalog
         if require_service_catalog:
             self.assertIsNotNone(serviceCatalog)
         if serviceCatalog is not None:
-            for service in serviceCatalog.findall(self._tag('service')):
+            services = serviceCatalog.findall(self._tag('service'))
+            if require_service_catalog:
+                self.assertTrue(len(services))
+            for service in services:
                 # validate service
                 self.assertIsNotNone(service.get('name'))
                 self.assertIsNotNone(service.get('type'))
 
                 # services contain at least one endpoint
-                self.assertTrue(len(service))
-                for endpoint in service.findall(self._tag('endpoint')):
+                endpoints = service.findall(self._tag('endpoint'))
+                self.assertTrue(len(endpoints))
+                for endpoint in endpoints:
                     # validate service endpoint
                     self.assertIsNotNone(endpoint.get('publicURL'))
 
@@ -844,3 +886,21 @@ class XmlTestCase(RestfulTestCase, CoreApiTests):
         for tenant in r.body.findall(self._tag('tenant')):
             self.assertValidTenant(tenant)
             self.assertIn(tenant.get('enabled'), ['true', 'false'])
+
+    def test_authenticate_with_invalid_xml_in_password(self):
+        # public_request would auto escape the ampersand
+        self.request(
+            port=self._public_port(),
+            method='POST',
+            path='/v2.0/tokens',
+            headers={
+                'Content-Type': 'application/xml'
+            },
+            body="""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <auth xmlns="http://docs.openstack.org/identity/api/v2.0"
+                        tenantId="bar">
+                     <passwordCredentials username="FOO" password="&"/>
+                </auth>
+            """,
+            expected_status=400)

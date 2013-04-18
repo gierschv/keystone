@@ -71,6 +71,7 @@ import webob.exc
 import json
 
 from keystone import mapping
+from keystone import catalog
 LOG = logging.getLogger(__name__)
 
 class RequestIssuingService(object):
@@ -107,7 +108,6 @@ class RequestIssuingService(object):
         </samlp:AuthnRequest>"""
 
     def getIdPRequest(self,key, issuer, endpoint):
-        LOG.info('IssueRequest')
         resp = {}
         resp['idpRequest'] = '?'+self.create_IdpRequest(key, issuer)
         resp['idpEndpoint'] = endpoint
@@ -115,8 +115,6 @@ class RequestIssuingService(object):
 
     def sign(self,doc, key):
         node = xmlsec.findNode(doc, xmlsec.dsig("Signature"))
-        if node == None:
-                print "Node was None"
         dsigCtx = xmlsec.DSigCtx()
         signKey = xmlsec.Key.load(key, xmlsec.KeyDataFormatPem, None)
         signKey.name = basename(key)
@@ -179,7 +177,7 @@ class RequestIssuingService(object):
 class Negotiator(object):
 
     def __init__(self):
-		""" do nothing """
+        """ do nothing """
         raise exception.NotImplemented()
 
     def negotiate(self, data):
@@ -192,28 +190,36 @@ class CredentialValidator(object):
     def __init__(self):
         self.org_mapping_api = mapping.controllers.OrgMappingController()
         self.mapping_api = mapping.controllers.AttributeMappingController()
+        self.catalog_api = catalog.controllers.EndpointV3()
     
     def __call__(self):
         return None
         
-    def validate(self, req, data, realm_id):
+    def validate(self, data, realm_id):
+        idp_info = self.catalog_api.list_endpoints({'is_admin': True, 'query_string':{'service_id':realm_id, 'interface': 'public'}})
+        unique_attribute = idp_info["endpoints"][0].get("identifier_attribute",None)
         resp = urlparse.parse_qsl(data)
         k, v = resp[0]
-        resp = base64.b64decode(v)
-        resp = ElementTree(fromstring(resp))
+        try:
+            resp = base64.b64decode(v)
+            resp = ElementTree(fromstring(resp))
+        except TypeError:
+            resp = base64.b64decode(v.replace(" ", "+"))
+            resp = ElementTree(fromstring(resp))
         atts = {}
         names = []
         for cond in resp.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Conditions"):
             expires = cond.attrib.get("NotOnOrAfter")
+	
         for name in resp.iter("{urn:oasis:names:tc:SAML:2.0:assertion}NameID"):
             names.append(name.text)
-        if(len(names) > 0):
-            atts["NameID"] = names
-	    for att in resp.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Attribute"):
-	        ats = []
-	        for value in att.iter("{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue"):
-		    ats.append(value.text) 
-	        atts[att.get("Name")] = ats
+	for att in resp.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Attribute"):
+	    ats = []
+	    for value in att.iter("{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue"):
+	        ats.append(value.text) 
+	    atts[att.get("Name")] = ats
+	if unique_attribute is not None and atts.get(unique_attribute, None) is not None:
+            names = atts.get(unique_attribute)
         return names[0], expires, self.check_issuers(data, atts, realm_id)
 
     def check_issuers(self, data, atts, realm_id):
@@ -222,8 +228,6 @@ class CredentialValidator(object):
         for att in atts:
            for val in atts[att]:
                org_atts = self.org_mapping_api.list_org_attributes(context)['org_attributes']
-               LOG.debug("The retrieved Irg Atts are:")
-               LOG.debug(org_atts)
                for org_att in org_atts:
                    if org_att['type'] == att:
                        if org_att['value'] == val or org_att['value'] is None:

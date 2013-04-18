@@ -36,8 +36,10 @@ class Service(sql.ModelBase, sql.DictBase):
 
 class Endpoint(sql.ModelBase, sql.DictBase):
     __tablename__ = 'endpoint'
-    attributes = ['id', 'interface', 'region', 'service_id', 'url']
+    attributes = ['id', 'interface', 'region', 'service_id', 'url',
+                  'legacy_endpoint_id']
     id = sql.Column(sql.String(64), primary_key=True)
+    legacy_endpoint_id = sql.Column(sql.String(64))
     interface = sql.Column(sql.String(8), primary_key=True)
     region = sql.Column('region', sql.String(255))
     service_id = sql.Column(sql.String(64),
@@ -170,5 +172,35 @@ class Catalog(sql.Base, catalog.Driver):
             url = core.format_url(endpoint.get('url'), d)
             interface_url = '%sURL' % endpoint['interface']
             catalog[endpoint['region']][service['type']][interface_url] = url
+
+        return catalog
+
+    def get_v3_catalog(self, user_id, tenant_id, metadata=None):
+        d = dict(CONF.iteritems())
+        d.update({'tenant_id': tenant_id,
+                  'user_id': user_id})
+
+        services = {}
+        for endpoint in self.list_endpoints():
+            # look up the service
+            service_id = endpoint['service_id']
+            services.setdefault(
+                service_id,
+                self.get_service(service_id))
+            service = services[service_id]
+            del endpoint['service_id']
+            endpoint['url'] = core.format_url(endpoint['url'], d)
+            if 'endpoints' in services[service_id]:
+                services[service_id]['endpoints'].append(endpoint)
+            else:
+                services[service_id]['endpoints'] = [endpoint]
+
+        catalog = []
+        for service_id, service in services.iteritems():
+            formatted_service = {}
+            formatted_service['id'] = service['id']
+            formatted_service['type'] = service['type']
+            formatted_service['endpoints'] = service['endpoints']
+            catalog.append(formatted_service)
 
         return catalog

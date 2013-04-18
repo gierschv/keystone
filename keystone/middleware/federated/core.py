@@ -52,22 +52,26 @@ Created on 30 Jan 2013
 from keystone import catalog
 from keystone import identity
 from keystone import token
+from keystone import auth
+from keystone import exception
+from keystone.common import config
 from keystone.mapping import controllers
 from keystone.middleware.federated import directory, user_management
+from keystone.openstack.common import jsonutils
 
 import uuid
 import imp
 import os
 import logging
 import json
-
+from keystone.common import wsgi
 import webob.dec
 import webob.exc
 
 import json as simplejson
 
 LOG = logging.getLogger(__name__)
-
+CONF = config.CONF
 class Request(webob.Request):
     pass
 
@@ -81,46 +85,56 @@ Supposing the request respect the following specification:
     
 '''
         
-
-class FederatedAuthentication(object):
+TEMP_PASS = uuid.uuid4().hex
+class FederatedAuthentication(wsgi.Middleware):
     
-    def __init__(self, app, conf):
+    def __init__(self, *args, **kwargs):
         '''
         Constructor
         '''
-        self.conf = conf
-        self.app = app
-                
+        super(FederatedAuthentication, self).__init__(*args, **kwargs)
+        #self.conf = conf
+        #self.app = app
         LOG.info('Starting federated middleware wrapper')
         LOG.info('Init FederatedAuthentication!')
         
         
         
     @webob.dec.wsgify(RequestClass=Request)
-    def __call__(self,req):
+    def process_request(self,request):
         
         
         LOG.debug('Request intercepted by CVM')
         LOG.debug('--------------------------')
-        if not 'HTTP_X_AUTHENTICATION_TYPE' in req.environ:
-            return self.app(req)
-        if not req.environ['HTTP_X_AUTHENTICATION_TYPE'] in  ('federated'):
-            return self.app(req)
-        
-        body = req.body 
-        data = simplejson.loads(body)
 
+        if not 'HTTP_X_AUTHENTICATION_TYPE' in request.environ:
+            return 
+        if not request.environ['HTTP_X_AUTHENTICATION_TYPE'] in  ('federated'):
+            return 
+        body = request.body 
+        data = jsonutils.loads(body)
+       
         if 'idpResponse' in data:
-            username, expires, validatedUserAttributes = self.validate(req, data, data['realm'])
+            username, expires, validatedUserAttributes = self.validate(request, data, data['realm'])
             identity_api = identity.controllers.UserV3()
             user_manager = user_management.UserManager()
             user, tempPass = user_manager.manage(username, expires)
             resp = {}
-            resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
+            try:
+                resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
+            except exception.Unauthorized:
+                user, tempPass = user_manager.manage(username, expires, updatePass=True)
+                resp['unscopedToken'], resp['tenants'] = self.mapAttributes(data, validatedUserAttributes, user, tempPass)
             LOG.debug(resp)
             return valid_Response(resp)
+        elif 'auth' in data:
+            LOG.debug("We just want to check the token and domain and forward the request")
+            self.setUserDomain(data)
+            LOG.debug("We set the user data")
+            request.body = jsonutils.dumps(data)
+            return 
         elif 'idpNegotiation' in data:
-			return self.negotiate(req, data, data['realm'])
+			return self.negotiate(request, data, data['realm'])
         else:
             if 'realm' in data:
                 realm_id = data['realm']
@@ -137,6 +151,7 @@ class FederatedAuthentication(object):
         protocol = service['type'].split('.')[1]
         processing_module = load_protocol_module(protocol)
         context['query_string'] = {}
+        context['path'] = ""
         context['query_string']['service_id'] = service['id']
         endpoints = endpoint_api.list_endpoints(context)['endpoints']
         endpoint = None
@@ -147,7 +162,7 @@ class FederatedAuthentication(object):
         else:
             LOG.error('No endpoint found for this service')
         ris = processing_module.RequestIssuingService()
-        return ris.getIdPRequest(self.conf['requestSigningKey'], self.conf['SPName'], endpoint)
+        return ris.getIdPRequest(CONF.federated.requestSigningKey, CONF.federated.SPName, endpoint)
 
     def validate(self, req, data, realm):
         ''' Get the validated attributes '''
@@ -172,40 +187,112 @@ class FederatedAuthentication(object):
     def mapAttributes(self, data, attributes, user, password):
         mapper = controllers.AttributeMappingController()
         identity_api = identity.controllers.UserV3()
-        legacy_identity_api = identity.controllers.User()
         role_api = identity.controllers.RoleV3()
         project_api = identity.controllers.ProjectV3()
+        domain_api = identity.controllers.DomainV3()
         context = {'is_admin': True}
+        context_q = {'is_admin': True, "query_string":{}, "path":""}
         toMap = mapper.map(context, attributes=attributes)['attribute_mappings']
         user_id = user['id']
+        old_roles = []
+        old_projects = project_api.list_user_projects(context_q, user_id=user_id)
+        LOG.debug("OLD USER PROJECTS")
+        LOG.debug(old_projects)
+        old_attributes = []
+        for old in old_projects["projects"]:
+            roles = role_api.list_grants(context_q, user_id=user_id, project_id=old["id"])
+            for old_role in roles["roles"]:
+                old_attributes.append({"project":old["id"], "role":old_role["id"], "domain": old["domain_id"]})
+        all_domains = domain_api.list_domains(context_q)["domains"]
+        for old in all_domains:
+            roles = role_api.list_grants(context_q, user_id=user_id, domain_id=old["id"])
+            for old_role in roles["roles"]:
+                old_attributes.append({"domain":old["id"], "role":old_role["id"]})
+
+        LOG.debug("OLD GRANTS")
+        LOG.debug(old_attributes)
         if user.get('expires') is not None:
             user.pop("expires")
-        roles = []
-        projects = []
-        domains = []
-        for k, v in toMap.iteritems():
-            if v == 'role':
-                roles.append(k)
-            if v == 'project':
-                projects.append(k)
-            if v == 'domain':
-                domains.append(k)
-        for d in domains:
-            for p in projects:
+        avail_projects = []
+        LOG.debug(toMap)
+        for i in toMap:
+            roles = []
+            projects = []
+            domains = []
+            for it in i:
+                for k, v in it.iteritems():
+                    if v == 'role':
+                        roles.append(k)
+                    if v == 'project':
+                        projects.append(k)
+                    if v == 'domain':
+                        domains.append(k)
+            for d in domains:
+                avail_projects.append({ "domain":d})
                 for r in roles:
-                    identity_api.add_role_to_user(context, user_id=user_id, project_id=p, role_id=r)
-        if len(domains) == 0:
+                    new_att = {"role":r, "domain": d}
+                    if new_att in old_attributes:
+                        index =old_attributes.index(new_att) 
+                        old_attributes.pop(index)
+                    role_api.create_grant(context, user_id=user_id, role_id=r, domain_id=d)
             for p in projects:
-                user["tenantId"] = p
-                legacy_identity_api.update_user_tenant(context, user['id'], user)
+                avail_projects.append({"project":p})
                 for r in roles:
                     LOG.debug("Adding role "+r+" to user "+user['name']+" on project "+p)
+                    new_att = {"project":p, "role":r, "domain": project_api.get_project(context, project_id=p)["project"]["domain_id"]}
+                    if new_att in old_attributes:
+                        index =old_attributes.index(new_att)                
+                        old_attributes.pop(index)
                     role_api.create_grant(context, user_id=user_id, project_id=p, role_id=r)
-        LOG.debug(user)
         context['query_string'] = {}
-        token_api = token.controllers.Auth()
-        unscoped_token = token_api.authenticate(context, auth={'passwordCredentials': {'username': user['name'], 'password': password}})
-        return unscoped_token['access']['token']['id'], [project_api.get_project(context, project_id=p)['project']  for p in projects]
+        context["method"] = "password"
+        token_api = auth.controllers.Auth()
+        LOG.debug(old_attributes)
+        for old in old_attributes:
+            if old.get("project", None) is not None:
+                role_api.revoke_grant(context, user_id=user_id, project_id=old["project"], role_id=old["role"])
+            else:
+                role_api.revoke_grant(context, user_id=user_id, domain_id=old["domain"], role_id=old["role"])
+        LOG.debug("getting unscoped token")
+        unscoped_token = token_api.authenticate_for_token(context, auth={"identity": {"methods": ["password"],"password": {"user": {"id": user_id, "password": password}}}})
+        projectsToReturn = []
+        for proj in avail_projects:
+            temp_proj = {}
+	    if proj.get("project", None) is not None:
+                temp_proj["project"] = project_api.get_project(context, project_id=proj["project"])["project"]
+                if temp_proj["project"].get("domain_id", None) is not None:
+                    temp_proj["project"]["domain"] = domain_api.get_domain(context, domain_id=temp_proj["project"]["domain_id"])["domain"]
+            if proj.get("domain", None) is not None:
+                temp_proj["domain"] = domain_api.get_domain(context, domain_id=proj["domain"])["domain"]
+            projectsToReturn.append(temp_proj)
+        token_data = jsonutils.loads(unscoped_token.body)
+        header = unscoped_token.headers.get("X-Subject-Token")
+        return header, projectsToReturn
+
+    def setUserDomain(self, data):
+        token_api = auth.controllers.Auth()
+        if data["auth"].get("token", None) is not None:
+            token_id = data["auth"]["token"]["id"]
+        else:
+            token_id = data["auth"]["identity"]["token"]["id"]
+        token_data = token_api.validate_token({"is_admin": True, "query_string":{}, "subject_token_id": token_id})
+        domain_id = None
+        if 'tenantId' in data['auth']:
+            # It's a tenant so find it's domain
+            project_api = identity.controllers.ProjectV3()
+            domain_id = project_api.get_project({"is_admin": True, "query_string":{}}, project_id=data["auth"]["tenantId"])["project"]["domain_id"]
+        elif 'domainId' in data['auth']:
+            domain_api = identity.controllers.DomainV3()
+            domain_id = domain_api.get_domain({"is_admin": True, "query_string":{}}, domain_id=data["auth"]["domainId"])["domain"]["id"]
+        if domain_id is None:
+            # Nothing to do here
+            return;
+        token_data = jsonutils.loads(token_data.body)
+        user_api = identity.controllers.UserV3()
+        user_ref = user_api.get_user({"is_admin": True, "query_string":{}}, user_id=token_data["token"]["user"]["id"]) 
+        user_ref["user"]["domain_id"] = domain_id 
+        user_api.update_user({"is_admin": True}, user=user_ref["user"], user_id=user_ref["user"]["id"])
+
 
 protocol_modules = {}
 def load_protocol_module(protocol):
@@ -217,14 +304,14 @@ def load_protocol_module(protocol):
     return protocol_modules[protocol]
         
 
-def filter_factory(global_conf, **local_conf):
+'''def filter_factory(global_conf, **local_conf):
     """Returns a WSGI filter app for use with paste.deploy."""
     conf = global_conf.copy()
     conf.update(local_conf)
 
     def auth_filter(app):
         return FederatedAuthentication(app, conf)
-    return auth_filter
+    return auth_filter'''
 
 def valid_Response(response):
     resp = webob.Response(content_type='application/json')

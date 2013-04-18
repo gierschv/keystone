@@ -15,27 +15,37 @@
 # under the License.
 
 import datetime
+import errno
 import os
+import socket
 import subprocess
 import sys
 import time
 
 import eventlet
 import mox
+import nose.exc
 from paste import deploy
 import stubout
 import unittest2 as unittest
 
+from keystone import catalog
 from keystone.common import kvs
 from keystone.common import logging
 from keystone.common import utils
 from keystone.common import wsgi
 from keystone import config
-from keystone import catalog
+from keystone import exception
 from keystone import identity
+from keystone.openstack.common import timeutils
 from keystone import policy
 from keystone import token
+
 from keystone import mapping
+
+from keystone import trust
+
+
 
 do_monkeypatch = not os.getenv('STANDARD_THREADS')
 eventlet.patcher.monkey_patch(all=False, socket=True, time=True,
@@ -51,6 +61,9 @@ DRIVERS = {}
 
 
 cd = os.chdir
+
+
+logging.getLogger('routes.middleware').level = logging.WARN
 
 
 def rootdir(*p):
@@ -70,7 +83,11 @@ def initialize_drivers():
     DRIVERS['identity_api'] = identity.Manager()
     DRIVERS['policy_api'] = policy.Manager()
     DRIVERS['token_api'] = token.Manager()
+
     DRIVERS['mapping_api'] = mapping.Manager()
+
+    DRIVERS['trust_api'] = trust.Manager()
+
     return DRIVERS
 
 
@@ -182,18 +199,24 @@ class TestCase(NoModule, unittest.TestCase):
         self._overrides = []
         self._group_overrides = {}
 
+        # show complete diffs on failure
+        self.maxDiff = None
+
     def setUp(self):
         super(TestCase, self).setUp()
         self.config([etcdir('keystone.conf.sample'),
                      testsdir('test_overrides.conf')])
         self.mox = mox.Mox()
+        self.opt(policy_file=etcdir('policy.json'))
         self.stubs = stubout.StubOutForTesting()
+        self.stubs.Set(exception, '_FATAL_EXCEPTION_FORMAT_ERRORS', True)
 
     def config(self, config_files):
         CONF(args=[], project='keystone', default_config_files=config_files)
 
     def tearDown(self):
         try:
+            timeutils.clear_time_override()
             self.mox.UnsetStubs()
             self.stubs.UnsetAll()
             self.stubs.SmartUnsetAll()
@@ -229,22 +252,44 @@ class TestCase(NoModule, unittest.TestCase):
         # TODO(termie): doing something from json, probably based on Django's
         #               loaddata will be much preferred.
         if hasattr(self, 'identity_api'):
+            for domain in fixtures.DOMAINS:
+                try:
+                    rv = self.identity_api.create_domain(domain['id'], domain)
+                except (exception.Conflict, exception.NotImplemented):
+                    pass
+                setattr(self, 'domain_%s' % domain['id'], domain)
+
             for tenant in fixtures.TENANTS:
-                rv = self.identity_api.create_tenant(tenant['id'], tenant)
+                try:
+                    rv = self.identity_api.create_project(tenant['id'], tenant)
+                except exception.Conflict:
+                    rv = self.identity_api.get_project(tenant['id'])
+                    pass
                 setattr(self, 'tenant_%s' % tenant['id'], rv)
+
+            for role in fixtures.ROLES:
+                try:
+                    rv = self.identity_api.create_role(role['id'], role)
+                except exception.Conflict:
+                    rv = self.identity_api.get_role(role['id'])
+                    pass
+                setattr(self, 'role_%s' % role['id'], rv)
 
             for user in fixtures.USERS:
                 user_copy = user.copy()
                 tenants = user_copy.pop('tenants')
-                rv = self.identity_api.create_user(user['id'],
-                                                   user_copy.copy())
+                try:
+                    rv = self.identity_api.create_user(user['id'],
+                                                       user_copy.copy())
+                except exception.Conflict:
+                    pass
                 for tenant_id in tenants:
-                    self.identity_api.add_user_to_tenant(tenant_id, user['id'])
+                    try:
+                        self.identity_api.add_user_to_project(tenant_id,
+                                                              user['id'])
+                    except exception.Conflict:
+                        pass
                 setattr(self, 'user_%s' % user['id'], user_copy)
-
-            for role in fixtures.ROLES:
-                rv = self.identity_api.create_role(role['id'], role)
-                setattr(self, 'role_%s' % role['id'], rv)
 
             for metadata in fixtures.METADATA:
                 metadata_ref = metadata.copy()
@@ -275,9 +320,9 @@ class TestCase(NoModule, unittest.TestCase):
         return deploy.appconfig(self._paste_config(config))
 
     def serveapp(self, config, name=None, cert=None, key=None, ca=None,
-                 cert_required=None):
+                 cert_required=None, host="127.0.0.1", port=0):
         app = self.loadapp(config, name=name)
-        server = wsgi.Server(app, host="127.0.0.1", port=0)
+        server = wsgi.Server(app, host, port)
         if cert is not None and ca is not None and key is not None:
             server.set_ssl(certfile=cert, keyfile=key, ca_certs=ca,
                            cert_required=cert_required)
@@ -301,3 +346,24 @@ class TestCase(NoModule, unittest.TestCase):
         :param delta: Maximum allowable time delta, defined in seconds.
         """
         self.assertAlmostEqual(a, b, delta=datetime.timedelta(seconds=delta))
+
+    def assertDictContainsSubset(self, dict1, dict2):
+        if len(dict1) < len(dict2):
+            (subset, fullset) = dict1, dict2
+        else:
+            (subset, fullset) = dict2, dict1
+        for x in subset:
+            self.assertIn(x, fullset)
+            self.assertEquals(subset.get(x), fullset.get(x))
+
+    @staticmethod
+    def skip_if_no_ipv6():
+        try:
+            s = socket.socket(socket.AF_INET6)
+        except socket.error as e:
+            if e.errno == errno.EAFNOSUPPORT:
+                raise nose.exc.SkipTest("IPv6 is not enabled in the system")
+            else:
+                raise
+        else:
+            s.close()

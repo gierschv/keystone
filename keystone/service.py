@@ -16,17 +16,23 @@
 
 import routes
 
+from keystone import auth
 from keystone import catalog
-from keystone.contrib import ec2
+from keystone import config
+from keystone import controllers
 from keystone.common import logging
 from keystone.common import wsgi
+from keystone.contrib import ec2
 from keystone import identity
 from keystone import policy
 from keystone import routers
 from keystone import token
 from keystone import mapping
+from keystone import trust
 
 
+
+CONF = config.CONF
 LOG = logging.getLogger(__name__)
 
 DRIVERS = dict(
@@ -35,17 +41,19 @@ DRIVERS = dict(
     identity_api=identity.Manager(),
     policy_api=policy.Manager(),
     token_api=token.Manager(),
-    mapping_api=mapping.Manager())
+    mapping_api=mapping.Manager(),
+    trust_api=trust.Manager())
 
 
 @logging.fail_gracefully
 def public_app_factory(global_conf, **local_conf):
+    controllers.register_version('v2.0')
     conf = global_conf.copy()
     conf.update(local_conf)
     return wsgi.ComposingRouter(routes.Mapper(),
                                 [identity.routers.Public(),
                                  token.routers.Router(),
-                                 routers.Version('public'),
+                                 routers.VersionV2('public'),
                                  routers.Extension(False)])
 
 
@@ -56,7 +64,7 @@ def admin_app_factory(global_conf, **local_conf):
     return wsgi.ComposingRouter(routes.Mapper(),
                                 [identity.routers.Admin(),
                                     token.routers.Router(),
-                                    routers.Version('admin'),
+                                    routers.VersionV2('admin'),
                                     routers.Extension()])
 
 
@@ -78,11 +86,19 @@ def admin_version_app_factory(global_conf, **local_conf):
 
 @logging.fail_gracefully
 def v3_app_factory(global_conf, **local_conf):
+    controllers.register_version('v3')
     conf = global_conf.copy()
     conf.update(local_conf)
     mapper = routes.Mapper()
     v3routers = []
-    for module in [catalog, identity, policy, mapping]:
+    for module in [auth, catalog, identity, policy, mapping]:
         module.routers.append_v3_routers(mapper, v3routers)
+
+    if CONF.trust.enabled:
+        trust.routers.append_v3_routers(mapper, v3routers)
+
+    # Add in the v3 version api
+    v3routers.append(routers.VersionV3('admin'))
+    v3routers.append(routers.VersionV3('public'))
     # TODO(ayoung): put token routes here
     return wsgi.ComposingRouter(mapper, v3routers)

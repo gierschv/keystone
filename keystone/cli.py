@@ -16,11 +16,16 @@
 
 from __future__ import absolute_import
 
-from keystone import config
+import grp
+import pwd
+
+from oslo.config import cfg
+
 from keystone.common import openssl
-from keystone.openstack.common import cfg
+from keystone import config
 from keystone.openstack.common import importutils
 from keystone.openstack.common import jsonutils
+from keystone.openstack.common import version
 
 CONF = config.CONF
 
@@ -49,14 +54,60 @@ class DbSync(BaseApp):
                 driver.db_sync()
 
 
-class PKISetup(BaseApp):
+class BaseCertificateSetup(BaseApp):
+    """Common user/group setup for PKI and SSL generation"""
+
+    @classmethod
+    def add_argument_parser(cls, subparsers):
+        parser = super(BaseCertificateSetup,
+                       cls).add_argument_parser(subparsers)
+        parser.add_argument('--keystone-user')
+        parser.add_argument('--keystone-group')
+        return parser
+
+    @staticmethod
+    def get_user_group():
+        keystone_user_id = None
+        keystone_group_id = None
+
+        try:
+            a = CONF.command.keystone_user
+            if a:
+                keystone_user_id = pwd.getpwnam(a).pw_uid
+        except KeyError:
+            raise ValueError("Unknown user '%s' in --keystone-user" % a)
+
+        try:
+            a = CONF.command.keystone_group
+            if a:
+                keystone_group_id = grp.getgrnam(a).gr_gid
+        except KeyError:
+            raise ValueError("Unknown group '%s' in --keystone-group" % a)
+
+        return keystone_user_id, keystone_group_id
+
+
+class PKISetup(BaseCertificateSetup):
     """Set up Key pairs and certificates for token signing and verification."""
 
     name = 'pki_setup'
 
-    @staticmethod
-    def main():
-        conf_ssl = openssl.ConfigurePKI()
+    @classmethod
+    def main(cls):
+        keystone_user_id, keystone_group_id = cls.get_user_group()
+        conf_pki = openssl.ConfigurePKI(keystone_user_id, keystone_group_id)
+        conf_pki.run()
+
+
+class SSLSetup(BaseCertificateSetup):
+    """Create key pairs and certificates for HTTPS connections"""
+
+    name = 'ssl_setup'
+
+    @classmethod
+    def main(cls):
+        keystone_user_id, keystone_group_id = cls.get_user_group()
+        conf_ssl = openssl.ConfigureSSL(keystone_user_id, keystone_group_id)
         conf_ssl.run()
 
 
@@ -121,6 +172,7 @@ CMDS = [
     ImportLegacy,
     ImportNovaAuth,
     PKISetup,
+    SSLSetup,
 ]
 
 
@@ -139,6 +191,8 @@ def main(argv=None, config_files=None):
     CONF.register_cli_opt(command_opt)
     CONF(args=argv[1:],
          project='keystone',
+         version=version.VersionInfo('keystone').version_string(),
          usage='%(prog)s [' + '|'.join([cmd.name for cmd in CMDS]) + ']',
          default_config_files=config_files)
+    config.setup_logging(CONF)
     CONF.command.cmd_class.main()
