@@ -602,6 +602,7 @@ class UserV3(controller.V3Controller):
                 ref['expires'] = timeutils.parse_strtime(expires)
             except ValueError:
                 ref['expires'] = timeutils.parse_isotime(expires)
+        LOG.debug(ref)
         ref = self._normalize_domain_id(context, ref)
         ref = self.identity_api.create_user(context, ref['id'], ref)
         return UserV3.wrap_member(context, ref)

@@ -169,6 +169,7 @@ class FederatedAuthentication(wsgi.Middleware):
         catalog_api = catalog.controllers.ServiceV3()
         context = {'is_admin': True}
         service = catalog_api.get_service(context=context, service_id=realm['id'])['service']
+        LOG.debug(service)
         type = service["type"].split('.')[1]
         processing_module = load_protocol_module(type)
         cred_validator = processing_module.CredentialValidator()
@@ -192,7 +193,11 @@ class FederatedAuthentication(wsgi.Middleware):
         domain_api = identity.controllers.DomainV3()
         context = {'is_admin': True}
         context_q = {'is_admin': True, "query_string":{}, "path":""}
+        LOG.debug('MAPPING')
+        LOG.debug('Context: %r' %context)
+        LOG.debug('Attributes : %r %r' % (attributes, mapper.map(context, attributes=attributes)))
         toMap = mapper.map(context, attributes=attributes)['attribute_mappings']
+        LOG.debug('toMap: %r', toMap)
         user_id = user['id']
         old_roles = []
         old_projects = project_api.list_user_projects(context_q, user_id=user_id)
@@ -254,6 +259,7 @@ class FederatedAuthentication(wsgi.Middleware):
             else:
                 role_api.revoke_grant(context, user_id=user_id, domain_id=old["domain"], role_id=old["role"])
         LOG.debug("getting unscoped token")
+        LOG.debug('Params: %r' % {"identity": {"methods": ["password"],"password": {"user": {"id": user_id, "password": password}}}})
         unscoped_token = token_api.authenticate_for_token(context, auth={"identity": {"methods": ["password"],"password": {"user": {"id": user_id, "password": password}}}})
         projectsToReturn = []
         for proj in avail_projects:

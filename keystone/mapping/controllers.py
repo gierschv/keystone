@@ -1,6 +1,8 @@
 import uuid
-
+from keystone.openstack.common import jsonutils 
 from keystone import identity
+from keystone import auth
+from keystone import exception
 from keystone.common import dependency
 from keystone.common import controller
 from keystone.common import manager
@@ -15,8 +17,8 @@ class AdminRolePermissionController(controller.V3Controller):
     def list_admin_role_permissions(self, context, admin_role_id):
         if not context['is_admin']:
             return
-        return self.mapping_api.list_admin_role_permissions(context,
-                                                            admin_role_id)
+        return {"admin_role_permissions":self.mapping_api.list_admin_role_permissions(context,
+                                                            admin_role_id)}
 
     def _add_permission(self, context, admin_role_id, attribute_id, type):
         if not context['is_admin']:
@@ -25,6 +27,9 @@ class AdminRolePermissionController(controller.V3Controller):
 
     def add_role_permission(self, context, admin_role_id, role_id):
         return self._add_permission(context, admin_role_id, role_id, 'role')
+
+    def add_idp_permission(self, context, admin_role_id, service_id):
+        return self._add_permission(context, admin_role_id, service_id, 'idp')
 
     def add_project_permission(self, context, admin_role_id, project_id):
         return self._add_permission(context, admin_role_id, project_id, 'project')
@@ -46,6 +51,9 @@ class AdminRolePermissionController(controller.V3Controller):
     def revoke_domain_permission(self, context, admin_role_id, domain_id):
         return self._revoke_permission(context, admin_role_id, domain_id, 'domain')
 
+    def revoke_idp_permission(self, context, admin_role_id, service_id):
+        return self._revoke_permission(context, admin_role_id, service_id, 'idp')
+
     def _check_permission(self, context, admin_role_id, attribute_id, type):
         if not context['is_admin']:
             return
@@ -60,32 +68,47 @@ class AdminRolePermissionController(controller.V3Controller):
     def check_domain_permission(self, context, admin_role_id, domain_id):
         return self._check_permission(context, admin_role_id, domain_id, 'domain')
 
+    def check_service_permission(self, context, admin_role_id, service_id):
+        return self._check_permission(context, admin_role_id, service_id, 'idp')
+
 
 class AttributeSetMappingController(controller.V3Controller):
     # Sets
-    @controller.protected
     def get_attribute_set_mapping(self, context, attribute_set_mapping_id):
+        if not is_authorised(context):
+            self.assert_admin(context)
         mapping_id = attribute_set_mapping_id
-        mapping = self.mapping_api.get_attribute_set_mapping(context,
-                                                             mapping_id)
+        mapping = is_permitted(context, self.mapping_api.get_attribute_set_mapping(context,
+                                                             mapping_id))
+        if not mapping:
+            raise exception.ForbiddenAction("You are not authorised to access one or more attribute in this set")
+            return
         return {'attribute_set_mapping': mapping}
 
-    @controller.protected
     def list_attribute_set_mappings(self, context):
+        if not is_authorised(context):
+            self.assert_admin(context)
         return {'attribute_set_mappings':
-                self.mapping_api.list_attribute_set_mappings(context)}
+                filter_by_user_role(context, self.mapping_api.list_attribute_set_mappings(context))}
 
-    @controller.protected
     def delete_attribute_set_mapping(self, context, attribute_set_mapping_id):
+        if not is_authorised(context):
+            self.assert_admin(context)
+        mapping_id = attribute_set_mapping_id
+        mapping = is_permitted(context, self.mapping_api.get_attribute_set_mapping(context,
+                                                             mapping_id))
+        if not mapping:
+            raise exception.ForbiddenAction("You are not authorised to access one or more attribute in this set")
+            return
         self.mapping_api.delete_attribute_set_mapping(context,
                                                       attribute_set_mapping_id)
 
-    @controller.protected
     def create_attribute_set_mapping(self, context, attribute_set_mapping):
         self.assert_admin(context)
         mapping_id = uuid.uuid4().hex
         mapping_ref = attribute_set_mapping.copy()
         mapping_ref['id'] = mapping_id
+        is_permitted(context, mapping_ref)
         new_mapping_ref = self.mapping_api.create_attribute_set_mapping(
             context, mapping_id, mapping_ref)
         return {'attribute_set_mapping': new_mapping_ref}
@@ -110,15 +133,14 @@ class AttributeMappingController(controller.V3Controller):
         os_set["attributes"] = attributes2
         return attribute_mapping
 
-    @controller.protected
     def get_attribute_mapping(self, context, attribute_mapping_id):
         mapping_id = attribute_mapping_id
         mapping = self.mapping_api.get_attribute_set_mapping(context,
                                                              mapping_id)
+        is_permitted(mapping)
         return {'attribute_mapping': self._get_attribute_mapping(context,
                                                                  mapping)}
 
-    @controller.protected
     def list_attribute_mappings(self, context):
         attribute_mappings = {}
         mappings_list = []
@@ -127,24 +149,27 @@ class AttributeMappingController(controller.V3Controller):
             attribute_mapping = self._get_attribute_mapping(context,
                                                             mapping)
             mappings_list.append(attribute_mapping)
-        attribute_mappings["attribute_mappings"] = mappings_list
+        attribute_mappings["attribute_mappings"] = filter_by_user_role(context, mappings_list)
         return attribute_mappings
 
-    @controller.protected
     def delete_attribute_mapping(self, context, attribute_mapping_id):
+        mapping_id = attribute_mapping_id
+        mapping = self.mapping_api.get_attribute_set_mapping(context,
+                                                             mapping_id)
+        is_permitted(mapping)
         self.mapping_api.delete_attribute_set_mapping(context,
                                                       attribute_mapping_id)
 
-    @controller.protected
     def create_attribute_mapping(self, context, attribute_mapping):
-        self.assert_admin(context)
+        if not context.get("is_admin", None):
+            is_permitted(context, attribute_mapping)        
         # Create the org set
         org_attribute_set = {}
         org_set_id = uuid.uuid4().hex
         org_attribute_set["id"] = org_set_id
         name = attribute_mapping["org_attribute_set"]["name"]
         org_attribute_set["name"] = name
-        if attribute_mapping["org_attribute_set"]["description"]:
+        if attribute_mapping["org_attribute_set"].get("description", None) is not None:
             description = attribute_mapping["org_attribute_set"]["description"]
             org_attribute_set["description"] = description
         org_set = self.mapping_api.create_org_attribute_set(context,
@@ -161,7 +186,7 @@ class AttributeMappingController(controller.V3Controller):
         os_attribute_set["id"] = os_set_id
         name = attribute_mapping["os_attribute_set"]["name"]
         os_attribute_set["name"] = name
-        if attribute_mapping["os_attribute_set"]["description"]:
+        if attribute_mapping["os_attribute_set"].get("description", None) is not None:
             description = attribute_mapping["os_attribute_set"]["description"]
             os_attribute_set["description"] = description
         os_set = self.mapping_api.create_os_attribute_set(context,
@@ -169,7 +194,8 @@ class AttributeMappingController(controller.V3Controller):
                                                           os_attribute_set)
         # Add the attributes
         attributes = attribute_mapping["os_attribute_set"]["attributes"]
-        for attribute, type in attributes.iteritems():
+        for att in attributes:
+            attribute, type = att.popitem()
             self.mapping_api.add_attribute_to_os_set(context,
                                                      os_set["id"],
                                                      attribute, type)
@@ -217,19 +243,16 @@ class OrgMappingController(controller.V3Controller):
 
     # Sets
 
-    @controller.protected
     def list_org_attribute_sets(self, context):
         return {'org_attribute_sets':
                 self.mapping_api.list_org_attribute_sets(context)}
 
-    @controller.protected
     def get_org_attribute_set(self, context, org_attribute_set_id):
         set_id = org_attribute_set_id
         org_set = self.mapping_api.get_org_attribute_set(context,
                                                          set_id)
         return {'org_attribute_set': org_set}
 
-    @controller.protected
     def delete_org_attribute_set(self, context, org_attribute_set_id):
         set_id = org_attribute_set_id
         mappings = self.mapping_api.list_attribute_set_mappings(
@@ -247,7 +270,6 @@ class OrgMappingController(controller.V3Controller):
         self.mapping_api.delete_org_attribute_set(context,
                                                   set_id)
 
-    @controller.protected
     def create_org_attribute_set(self, context, org_attribute_set):
         self.assert_admin(context)
         set_id = uuid.uuid4().hex
@@ -257,14 +279,12 @@ class OrgMappingController(controller.V3Controller):
             context, set_id, set_ref)
         return {'org_attribute_set': new_set_ref}
 
-    @controller.protected
     def add_attribute_to_org_set(self, context, org_attribute_set_id,
                                  attribute_id):
         return self.mapping_api.add_attribute_to_org_set(context,
                                                          org_attribute_set_id,
                                                          attribute_id)
 
-    @controller.protected
     def remove_attribute_from_org_set(self, context,
                                       org_attribute_set_id, attribute_id):
         set_id = org_attribute_set_id
@@ -272,7 +292,6 @@ class OrgMappingController(controller.V3Controller):
                                                               set_id,
                                                               attribute_id)
 
-    @controller.protected
     def check_attribute_in_org_set(self, context,
                                    org_attribute_set_id, attribute_id):
         set_id = org_attribute_set_id
@@ -280,25 +299,24 @@ class OrgMappingController(controller.V3Controller):
                                                            set_id,
                                                            attribute_id)
 
-    @controller.protected
     def list_attributes_in_org_set(self, context, org_attribute_set_id):
         return self.mapping_api.list_attributes_in_org_set(
             context, org_attribute_set_id)
     # Attributes
 
-    @controller.protected
     def get_org_attribute(self, context, org_attribute_id=None):
         att = self.mapping_api.get_org_attribute(context, org_attribute_id)
         return {'org_attribute': att}
 
-    @controller.protected
     def list_org_attributes(self, context):
         atts = self.mapping_api.list_org_attributes(context)
         return {'org_attributes': atts}
 
-    @controller.protected
     def delete_org_attribute(self, context, org_attribute_id):
         att_id = org_attribute_id
+        issuers = self.list_issuers_for_attribute({"is_admin":True}, org_attribute_id=org_attribute_id)
+        if len(issuers) > 0:
+            raise exception.ForbiddenAction("This attribute is currently being issued by one or more Identity Providers and cannot be deleted")
         sets = self.mapping_api.list_org_sets_containing_attribute(
             context,
             org_attribute_id=att_id)
@@ -306,9 +324,9 @@ class OrgMappingController(controller.V3Controller):
             self.delete_org_attribute_set(set)
         self.mapping_api.delete_org_attribute(context, att_id)
 
-    @controller.protected
     def create_org_attribute(self, context, org_attribute):
-        self.assert_admin(context)
+        if not is_authorised(context):
+            self.assert_admin(context)
         attribute_id = uuid.uuid4().hex
         attribute_ref = org_attribute.copy()
         attribute_ref['id'] = attribute_id
@@ -316,24 +334,34 @@ class OrgMappingController(controller.V3Controller):
             context, attribute_id, attribute_ref)
         return {'org_attribute': new_attribute_ref}
 
-    @controller.protected
     def list_issuers_for_attribute(self, context, org_attribute_id):
         return self.mapping_api.list_issuers_for_attribute(context,
                                                         org_attribute_id)
 
-    @controller.protected
     def add_issuer_to_attribute(self, context, org_attribute_id, service_id):
+        permissions_api = AdminRolePermissionController()
+        authorised = False
+        if not context.get("is_admin"):
+            roles = get_user_roles(context)
+            for role in roles:
+                try:
+                    permissions_api._check_permission({"is_admin":True}, admin_role_id=role["id"], attribute_id=service_id, type="idp")
+                    authorised = True
+                except exception.Forbidden:
+                    continue
+        else:
+            authorised = True
+        if not authorised:
+            raise exception.ForbiddenAction("You are not authorised to modify the issuing policy of this provider")
         return self.mapping_api.add_issuer_to_attribute(context,
                                                         org_attribute_id,
                                                         service_id)
 
-    @controller.protected
     def check_attribute_can_be_issued(self, context, org_attribute_id, service_id):
         return self.mapping_api.check_attribute_can_be_issued(context,
                                                         org_attribute_id,
                                                         service_id)
 
-    @controller.protected
     def remove_issuer_from_attribute(self, context, org_attribute_id, service_id):
         return self.mapping_api.remove_issuer_from_attribute(context,
                                                         org_attribute_id,
@@ -374,7 +402,6 @@ class OsMappingController(controller.V3Controller):
                                                         set_id,
                                                         attribute_id,
                                                         'domain')
-    @controller.protected
     def add_attribute_to_os_set(self, context,
                                 os_attribute_set_id, attribute_id):
         type = context['query_string']['type']
@@ -394,7 +421,6 @@ class OsMappingController(controller.V3Controller):
                                                         attribute_id,
                                                         type)
 
-    @controller.protected
     def remove_attribute_from_os_set(self, context,
                                      os_attribute_set_id, attribute_id):
         type = context['query_string']['type']
@@ -407,7 +433,6 @@ class OsMappingController(controller.V3Controller):
                                                              attribute_id,
                                                              type)
 
-    @controller.protected
     def check_attribute_in_os_set(self, context,
                                   os_attribute_set_id, attribute_id):
         type = context['query_string']['type']
@@ -420,19 +445,16 @@ class OsMappingController(controller.V3Controller):
                                                           attribute_id,
                                                           type)
 
-    @controller.protected
     def get_os_attribute_set(self, context, os_attribute_set_id=None):
         if os_attribute_set_id:
             os_set = self.mapping_api.get_os_attribute_set(context,
                                                            os_attribute_set_id)
             return {'os_attribute_set': os_set}
 
-    @controller.protected
     def list_os_attribute_sets(self, context):
         return {'os_attribute_sets':
                 self.mapping_api.list_os_attribute_sets(context)}
 
-    @controller.protected
     def delete_os_attribute_set(self, context, os_attribute_set_id):
         mappings = self.mapping_api.list_attribute_set_mappings(
             context,
@@ -448,7 +470,6 @@ class OsMappingController(controller.V3Controller):
 
         self.mapping_api.delete_os_attribute_set(context, os_attribute_set_id)
 
-    @controller.protected
     def create_os_attribute_set(self, context, os_attribute_set):
         self.assert_admin(context)
         set_id = uuid.uuid4().hex
@@ -464,3 +485,82 @@ class OsMappingController(controller.V3Controller):
             type=type)
         for set in sets:
             self.delete_os_attribute_set(context, set['id'])
+
+def is_authorised(context):
+    # VGI
+    return True
+    # Return true if the user has a role entry in the permissions table
+    # Declare apis
+    permissions_api = AdminRolePermissionController()
+    admin_context = {"is_admin": True}
+    for role in get_user_roles(context):
+        permissions = permissions_api.list_admin_role_permissions(admin_context, admin_role_id=role["id"])
+        if len(permissions["admin_role_permissions"]) > 0:
+            return True
+
+def filter_by_user_role(context, mappings):
+    new_mappings = []
+    for mapping in mappings:
+        print "FILTERING"
+        try:
+            is_permitted(context, mapping)
+            new_mappings.append(mapping)
+        except exception.Forbidden:
+            continue
+    return new_mappings
+
+def get_user_roles(context):
+    # Return all of the roles this user has across all projects and domains
+    project_api = identity.controllers.ProjectV3()
+    role_api = identity.controllers.RoleV3()
+    domain_api = identity.controllers.DomainV3()
+    user_api = identity.controllers.UserV3()
+    token_api = auth.controllers.Auth()
+    # First get the user details from the token
+    if context.get("token_id", None) is None:
+        # If the context doesn't contain a token we can't do anything - not authorised
+        return False;
+    # Context for internal requests
+    admin_context = {"is_admin": True}
+    # Set up the validate token request
+    admin_context["subject_token_id"] = context.get("token_id")
+    admin_context["query_string"] = {}
+    token_data = token_api.validate_token(admin_context)
+    # Now we can get the user_id
+    user_id = jsonutils.loads(token_data.body)["token"]["user"]["id"]
+    # Get the projects so we can get all the users roles across all projects
+    admin_context.pop("subject_token_id")
+    admin_context["path"] = ""
+    projects = project_api.list_user_projects(admin_context, user_id=user_id)
+    for proj in projects["projects"]:
+        roles = role_api.list_grants(admin_context, user_id=user_id, project_id=proj["id"])["roles"]
+    domains = domain_api.list_domains(admin_context)
+    for dom in domains["domains"]:
+        dom_roles = role_api.list_grants(admin_context, user_id=user_id, domain_id=dom["id"])["roles"]
+    all_roles = []
+    for r in roles:
+        all_roles.append(r)
+    for r in dom_roles:
+        all_roles.append(r)
+    return all_roles;
+
+def is_permitted(context, mapping):
+    # Check if the mapping contains IDs or details
+    os_set_api = OsMappingController()
+    permissions_api = AdminRolePermissionController()
+    # Return the mapping if the admin token has been used
+    if context["is_admin"]:
+        return mapping
+    mapping_ref = mapping.copy()
+    if mapping.get("org_attribute_set_id", None) is not None:
+        mapping_ref["os_attribute_set"] = os_set_api.get_os_attribute_set({"is_admin": True}, os_attribute_set_id=mapping["os_attribute_set_id"])["os_attribute_set"]
+        mapping_ref["os_attribute_set"]["attributes"] = os_set_api.list_attributes_in_os_set({"is_admin":True}, os_attribute_set_id=mapping["os_attribute_set_id"])
+    attributes = mapping_ref["os_attribute_set"]["attributes"]
+    roles = get_user_roles(context)
+    for r in roles:
+        print attributes
+        for att in attributes:
+            att_copy = att.copy()
+            k, v = att_copy.popitem()
+            permissions_api._check_permission({"is_admin":True},admin_role_id=r["id"], attribute_id=k, type=v)
+    return mapping

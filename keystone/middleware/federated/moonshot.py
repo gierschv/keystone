@@ -57,11 +57,13 @@ import webob.dec
 import webob.exc
 import json
 import platform
+from lxml.etree import parse, tostring, fromstring, ElementTree
 import moonshot
 
 from keystone import identity
 from keystone import mapping
 from keystone import exception
+from keystone import catalog
 
 LOG = logging.getLogger(__name__)
 
@@ -116,6 +118,7 @@ class GssAPIContext(object):
                     moonshot.authGSSServerClean(GssAPIContext.contexts.pop(cid)['context'])
             if context is not None:
                 moonshot.authGSSServerClean(context)
+            LOG.debug('Remaining contextes: %r' % self.contexts)
         except Exception, err:
             LOG.error('GSS clean error: %s' % err)
 
@@ -160,6 +163,7 @@ class CredentialValidator(GssAPIContext):
     def __init__(self):
         self.org_mapping_api = mapping.controllers.OrgMappingController()
         self.mapping_api = mapping.controllers.AttributeMappingController()
+        self.catalog_api = catalog.controllers.EndpointV3()
         pass
     
     def __call__(self):
@@ -175,40 +179,54 @@ class CredentialValidator(GssAPIContext):
                 username = moonshot.authGSSServerUserName(context['context'])
                 LOG.debug('USERNAME = %s', username)
 
-                LOG.debug('ATTRS = %r', moonshot.authGSSServerAttributes(context['context']))
-                expires = datetime.now() + timedelta(hours=24)
+                attributes = moonshot.authGSSServerAttributes(context['context'])
                 self.destroyClientContext(cid, context['context'])
-                return username, expires.isoformat(), self.getUserAttributes(username)
+                LOG.debug('ATTRS = %r', attributes)
+                LOG.debug('SAML assertion = %r', attributes['urn:ietf:params:gss:federated-saml-assertion'])
+
+                attributes = ElementTree(fromstring(attributes['urn:ietf:params:gss:federated-saml-assertion']))
+
+                LOG.debug(attributes)
+                atts = {}
+                names = []
+                for cond in attributes.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Conditions"):
+                    expires = cond.attrib.get("NotOnOrAfter")
+
+                for name in attributes.iter("{urn:oasis:names:tc:SAML:2.0:assertion}NameID"):
+                    names.append(name.text)
+                for att in attributes.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Attribute"):
+                    ats = []
+                    for value in att.iter("{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue"):
+                        ats.append(value.text) 
+                    atts[att.get("Name")] = ats
+
+                return username, expires, self.check_issuers(atts, realm_id)
         except (moonshot.KrbError, MoonshotException), err:
             LOG.error(err)
             self.destroyClientContext(cid, context['context'])
         raise exception.CredentialNotFound()
 
-    def getUserAttributes(self, username):
-        print "getUserAttributes"
-        # identity_api = identity.controllers.User()
-        # role_api = identity.controllers.Role()
-        # tenant_api = identity.controllers.Tenant()
-        # context = {'is_admin': True}
-
-        # validatedAttributes = {'role': [], 'project': None}
-        # user = identity_api.get_user_by_name(context, username)['user']
-
-        # # Roles
-        # roles = role_api.get_user_roles(context, user['id'], user['tenantId'])
-        # for r in roles['roles']:
-        #     validatedAttributes['role'].append(r['name'])
-
-        # # Tenant name
-        # tenant = tenant_api.get_tenant(context, user['tenantId'])['tenant']
-        # if tenant['enabled'] is True:
-        #     validatedAttributes['project'] = tenant['name']
-
-
-        # print self.org_mapping_api.list_org_attributes(context)['org_attributes']
-        # return validatedAttributes
-
-        #print roles
+    def check_issuers(self, atts, realm_id):
+        LOG.debug('check_issuers/atts: %r' % atts)
+        context = {"is_admin": True}
+        valid_atts = {}
+        for att in atts:
+           for val in atts[att]:
+               org_atts = self.org_mapping_api.list_org_attributes(context)['org_attributes']
+               LOG.debug('org_attr db: %r' % org_atts)
+               for org_att in org_atts:
+                   if org_att['type'] == att:
+                       if org_att['value'] == val or org_att['value'] is None:
+                           try:
+                               self.org_mapping_api.check_attribute_can_be_issued(context, service_id=realm_id, org_attribute_id=org_att['id'])
+                               try:
+                                   valid_atts[att].append(val)
+                               except:
+                                   valid_atts[att] = [val]
+                           except exception.NotFound:
+                               pass
+        LOG.debug('valid_atts: %r' %valid_atts)
+        return valid_atts
 
 
 def build_response(response):

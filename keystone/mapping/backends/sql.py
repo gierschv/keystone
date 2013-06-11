@@ -64,7 +64,7 @@ class Mapping(sql.Base, Driver):
             return session.query(OrgAttribute).filter_by(
                 id=attribute_id).one()
         except sql.NotFound:
-            raise exception.OrgAttributeNotFound(id=attribute_id)
+            raise exception.OrgAttributeNotFound(org_attribute_id=attribute_id)
 
     def list_org_attributes(self):
         session = self.get_session()
@@ -340,7 +340,7 @@ class Mapping(sql.Base, Driver):
         query = query.filter_by(type=type)
         existing = query.first()
         if not existing:
-            raise exception.NotFound("Attribute cannot be mapped")
+            raise exception.Forbidden("Permission denied for attribute "+attribute_id)
         session.flush()
 
     def revoke_permission(self, admin_role_id, attribute_id, type):

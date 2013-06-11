@@ -135,6 +135,10 @@ def append_v3_routers(mapper, routers):
                    controller=controllers.AdminRolePermissionController(),
                    action='add_domain_permission',
                    conditions=dict(method=['PUT']))
+    mapper.connect('/admin-role-permissions/{admin_role_id}/permissions/idps/{service_id}',
+                   controller=controllers.AdminRolePermissionController(),
+                   action='add_idp_permission',
+                   conditions=dict(method=['PUT']))
 
     mapper.connect('/admin-role-permissions/{admin_role_id}/permissions/roles/{role_id}',
                    controller=controllers.AdminRolePermissionController(),
@@ -148,6 +152,10 @@ def append_v3_routers(mapper, routers):
                    controller=controllers.AdminRolePermissionController(),
                    action='revoke_domain_permission',
                    conditions=dict(method=['DELETE']))
+    mapper.connect('/admin-role-permissions/{admin_role_id}/permissions/idps/{service_id}',
+                   controller=controllers.AdminRolePermissionController(),
+                   action='revoke_idp_permission',
+                   conditions=dict(method=['DELETE']))
 
     mapper.connect('/admin-role-permissions/{admin_role_id}/permissions/roles/{role_id}',
                    controller=controllers.AdminRolePermissionController(),
@@ -160,4 +168,8 @@ def append_v3_routers(mapper, routers):
     mapper.connect('/admin-role-permissions/{admin_role_id}/permissions/domains/{domain_id}',
                    controller=controllers.AdminRolePermissionController(),
                    action='check_domain_permission',
+                   conditions=dict(method=['HEAD']))
+    mapper.connect('/admin-role-permissions/{admin_role_id}/permissions/idps/{service_id}',
+                   controller=controllers.AdminRolePermissionController(),
+                   action='check_idp_permission',
                    conditions=dict(method=['HEAD']))

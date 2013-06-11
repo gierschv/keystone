@@ -208,6 +208,10 @@ class VersionNotFound(NotFound):
     """Could not find version: %(version)s"""
 
 
+class OrgAttributeNotFound(NotFound):
+    """Could not find Org Attribute: %(org_attribute_id)s"""
+
+
 class Conflict(Error):
     """Conflict occurred attempting to store %(type)s.
 

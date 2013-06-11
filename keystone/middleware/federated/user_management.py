@@ -13,6 +13,9 @@ sha = hashlib.sha1()
 sha.update(temp_password)
 temp_password = base64.b64encode(sha.digest())
 
+import logging
+LOG = logging.getLogger(__name__)
+
 class UserManager(object):
 
     def __init__(self):
@@ -31,13 +34,18 @@ class UserManager(object):
             user = self.identity_api.create_user({'is_admin': True}, user=user_ref)['user']
             return user, tempPass
         except exception.Conflict:
+            LOG.debug('Conflit, updatePass = %r' % updatePass)
             users = self.identity_api.list_users({"is_admin": True, "query_string":{}, "path":""})
             for u in users["users"]:
                 if new_id == u["name"]:
                     user = u
                     if updatePass:
                         user['password'] = tempPass
-                    user['expires'] = expires
+                    try:
+                        user['expires'] = timeutils.parse_strtime(expires)
+                    except ValueError:
+                        user['expires'] = timeutils.parse_isotime(expires)
+                    user['expires'] = user['expires'].replace(tzinfo=None)
                     self.identity_api.update_user({"is_admin": True}, user_id=user['id'], user=user) 
 		# Return user
             return user, tempPass
