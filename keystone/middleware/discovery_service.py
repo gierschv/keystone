@@ -32,6 +32,8 @@ class DiscoveryService(wsgi.Middleware):
         
         
     def process_request(self, request):
+        if not request.body:
+            return
         req = jsonutils.loads(request.body)
         # If this is not an authentication request then abort
         auth = req.get("auth", None)
