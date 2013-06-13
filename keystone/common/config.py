@@ -405,6 +405,9 @@ def configure():
     register_str(
         'saml', group='auth',
         default='keystone.auth.plugins.federated.protocol.saml.SAML')
+    register_str(
+        'moonshot', group='auth',
+        default='keystone.auth.plugins.federated.protocol.moonshot.Moonshot')
     # register any non-default auth protocols here (
     for protocol_name in CONF.auth.protocols:
         if protocol_name not in _DEFAULT_AUTH_PROTOCOLS:

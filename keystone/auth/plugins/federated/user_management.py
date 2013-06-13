@@ -22,7 +22,7 @@ class UserManager(object):
         # Create User
         sha1 = hashlib.sha1()
         sha1.update(username)
-        new_id = base64.b64encode(sha1.digest())
+        new_id = sha1.hexdigest()
         tempPass = temp_password
         user_ref = {'id': new_id, 'name': new_id, 'password': tempPass}
         try:

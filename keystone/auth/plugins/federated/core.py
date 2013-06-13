@@ -60,12 +60,12 @@ class Federated(auth.AuthMethodHandler):
         except KeyError as e:
             raise exception.ValidationError(attribute="protocol", target=auth_payload)
         
-        
+
         validate_api = get_auth_protocol(protocol)
        
         # Negotiation / Request Issuing
         try:
-            return validate_api.negotiate(auth_payload["negotiation"])
+            return validate_api.negotiate(auth_payload)
         except KeyError:
             pass
         # Validation
