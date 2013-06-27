@@ -103,8 +103,8 @@ class Moonshot(object):
         context = self.getClientContext(cid)
         try:
             if type(context) == dict and context['state'] == pymoonshot.AUTH_GSS_COMPLETE:
-                username = pymoonshot.authGSSServerUserName(context['context'])
-                LOG.debug('USERNAME = %s', username)
+                #username = pymoonshot.authGSSServerUserName(context['context'])
+                #LOG.debug('USERNAME = %s', username)
 
                 attributes = pymoonshot.authGSSServerAttributes(context['context'])
                 self.destroyClientContext(cid, context['context'])
@@ -125,7 +125,8 @@ class Moonshot(object):
                     for value in att.iter("{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue"):
                         ats.append(value.text)
                     atts[att.get("Name")] = ats
-                return username, atts, expires
+                #return username, atts, expires
+                return names[0], atts, expires
 
         except (pymoonshot.KrbError, MoonshotException), err:
             LOG.error(err)

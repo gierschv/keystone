@@ -419,6 +419,9 @@ def configure():
     register_str(
         'issuing_policy', group='auth',
         default='keystone.auth.plugins.federated.issuing_policy.Default')
+    register_str(
+        'discovery', group='auth',
+        default='keystone.auth.plugins.federated.discovery.Default')
 
     # register any non-default auth methods here (used by extensions, etc)
     for method_name in CONF.auth.methods:
