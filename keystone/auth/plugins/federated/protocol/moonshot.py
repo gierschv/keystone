@@ -56,6 +56,13 @@ class Moonshot(object):
             LOG.error('GSS clean error: %s' % err)
 
     # Plugin steps
+    def request_auth(self, auth_payload):
+        return {
+            'mechanism': '{1 3 6 1 5 5 15 1 1 18}',
+            'serviceName': 'keystone@moonshot'
+        }
+
+
     def negotiate(self, auth_payload):
         # Client identifier
         if 'cid' in auth_payload and auth_payload['cid'] is not None:
