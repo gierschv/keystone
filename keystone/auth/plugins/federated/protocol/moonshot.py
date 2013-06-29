@@ -16,12 +16,15 @@ from keystone import exception
 
 LOG = logging.getLogger(__name__)
 
+
 class MoonshotException(Exception):
     pass
+
 
 class Moonshot(object):
     # GSS contexts
     contexts = {}
+
     def __exit__(self, type, value, traceback):
         for cid in Moonshot.contexts.keys():
             LOG.debug('Clean GSSAPI context: %s', cid)
@@ -48,7 +51,9 @@ class Moonshot(object):
         try:
             if cid is not None:
                 if cid in Moonshot.contexts:
-                    pymoonshot.authGSSServerClean(Moonshot.contexts.pop(cid)['context'])
+                    pymoonshot.authGSSServerClean(
+                        Moonshot.contexts.pop(cid)['context']
+                    )
             if context is not None:
                 pymoonshot.authGSSServerClean(context)
             LOG.debug('Remaining contextes: %r' % self.contexts)
@@ -62,7 +67,6 @@ class Moonshot(object):
             'serviceName': 'keystone@%s' % platform.node()
         }
 
-
     def negotiate(self, auth_payload):
         # Client identifier
         if 'cid' in auth_payload and auth_payload['cid'] is not None:
@@ -71,11 +75,12 @@ class Moonshot(object):
             cid = str(uuid.uuid1())
 
         # Negotiation string
-        negotiation = auth_payload.get("negotiation")
+        negotiation = auth_payload.get('negotiation')
         # if not negotiation:
-        #     raise exception.ValidationError(attribute="negotiation", target=negotiation)
+        #     raise exception.ValidationError(attribute='negotiation',
+        #                                     target=negotiation)
         if not negotiation:
-            raise KeyError("No negotiation payload")
+            raise KeyError('No negotiation payload')
 
         context = self.getClientContext(cid)
         resp = {'cid': cid, 'negotiation': None}
@@ -84,15 +89,23 @@ class Moonshot(object):
             # Init
             if context is None:
                 context = {}
-                result, context['context'] = pymoonshot.authGSSServerInit('keystone@%s' % platform.node(), '{1 3 6 1 5 5 15 1 1 18}')
+                result, context['context'] = pymoonshot.authGSSServerInit(
+                    'keystone@%s' % platform.node(),
+                    '{1 3 6 1 5 5 15 1 1 18}'
+                )
                 if result != 1:
-                    raise MoonshotException('moonshot.authGSSServerInit returned result %d' % result)
+                    raise MoonshotException(
+                        'moonshot.authGSSServerInit returned %d' % result
+                    )
 
             # Negotiate steps
-            LOG.debug('Server Step : %r / %r' % (context['context'], negotiation))
-            context['state'] = pymoonshot.authGSSServerStep(context['context'], negotiation)
+            context['state'] = pymoonshot.authGSSServerStep(
+                context['context'], negotiation
+            )
             self.setClientContext(cid, context)
-            resp['negotiation'] = pymoonshot.authGSSServerResponse(context['context'])
+            resp['negotiation'] = pymoonshot.authGSSServerResponse(
+                context['context']
+            )
 
         except (pymoonshot.KrbError, MoonshotException), err:
             LOG.error(err)
@@ -103,36 +116,52 @@ class Moonshot(object):
 
     def validate(self, auth_payload):
         # Client identifier
-        cid = auth_payload.get("cid")
+        cid = auth_payload.get('cid')
         if not cid:
-            raise exception.ValidationError(attribute="cid", target=auth_payload)
+            raise exception.ValidationError(
+                attribute='cid', target=auth_payload
+            )
 
         context = self.getClientContext(cid)
         try:
-            if type(context) == dict and context['state'] == pymoonshot.AUTH_GSS_COMPLETE:
-                #username = pymoonshot.authGSSServerUserName(context['context'])
-                #LOG.debug('USERNAME = %s', username)
+            if type(context) == dict and \
+                    context['state'] == pymoonshot.AUTH_GSS_COMPLETE:
 
-                attributes = pymoonshot.authGSSServerAttributes(context['context'])
+                attributes = pymoonshot.authGSSServerAttributes(
+                    context['context']
+                )
                 self.destroyClientContext(cid, context['context'])
                 LOG.debug('ATTRS = %r', attributes)
-                LOG.debug('SAML assertion = %r', attributes['urn:ietf:params:gss:federated-saml-assertion'])
+                LOG.debug(
+                    'SAML assertion = %r',
+                    attributes['urn:ietf:params:gss:federated-saml-assertion']
+                )
 
-                assertion = ElementTree(fromstring(attributes['urn:ietf:params:gss:federated-saml-assertion']))
+                assertion = ElementTree(fromstring(
+                    attributes['urn:ietf:params:gss:federated-saml-assertion']
+                ))
 
                 atts = {}
                 names = []
-                for cond in assertion.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Conditions"):
-                    expires = cond.attrib.get("NotOnOrAfter")
+                for cond in assertion.iter(
+                    '{urn:oasis:names:tc:SAML:2.0:assertion}Conditions'
+                ):
+                    expires = cond.attrib.get('NotOnOrAfter')
 
-                for name in assertion.iter("{urn:oasis:names:tc:SAML:2.0:assertion}NameID"):
+                for name in assertion.iter(
+                    '{urn:oasis:names:tc:SAML:2.0:assertion}NameID'
+                ):
                     names.append(name.text)
-                for att in assertion.iter("{urn:oasis:names:tc:SAML:2.0:assertion}Attribute"):
+                for att in assertion.iter(
+                    '{urn:oasis:names:tc:SAML:2.0:assertion}Attribute'
+                ):
                     ats = []
-                    for value in att.iter("{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue"):
+                    for value in att.iter(
+                        '{urn:oasis:names:tc:SAML:2.0:assertion}AttributeValue'
+                    ):
                         ats.append(value.text)
-                    atts[att.get("Name")] = ats
-                #return username, atts, expires
+                    atts[att.get('Name')] = ats
+
                 return names[0], atts, expires
 
         except (pymoonshot.KrbError, MoonshotException), err:
