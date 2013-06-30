@@ -76,11 +76,10 @@ class Moonshot(object):
 
         # Negotiation string
         negotiation = auth_payload.get('negotiation')
-        # if not negotiation:
-        #     raise exception.ValidationError(attribute='negotiation',
-        #                                     target=negotiation)
         if not negotiation:
-            raise KeyError('No negotiation payload')
+            raise exception.ValidationError(
+                attribute='negotiation', target=auth_payload
+            )
 
         context = self.getClientContext(cid)
         resp = {'cid': cid, 'negotiation': None}
