@@ -212,7 +212,7 @@ class TestFederatedMoonshot(test.TestCase):
         with self.assertRaises(exception.Unauthorized):
             self.auth_api.authenticate({}, auth_info, auth_context)
 
-    def test_validaton_not_completed_authentication(self):
+    def test_validation_not_completed_authentication(self):
         result, context = moonshot.authGSSClientInit(
             'keystone@%s' % platform.node(),
             0, '{1 3 6 1 5 5 15 1 1 18}'
