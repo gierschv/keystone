@@ -70,9 +70,9 @@ class Moonshot(object):
     def negotiate(self, auth_payload):
         # Client identifier
         if 'cid' in auth_payload and auth_payload['cid'] is not None:
-            cid = auth_payload['cid']
+            cid = uuid.UUID(auth_payload['cid']).hex
         else:
-            cid = str(uuid.uuid1())
+            cid = uuid.uuid4().hex
 
         # Negotiation string
         negotiation = auth_payload.get('negotiation')
