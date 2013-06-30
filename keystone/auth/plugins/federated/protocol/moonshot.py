@@ -110,7 +110,7 @@ class Moonshot(object):
         except (pymoonshot.KrbError, MoonshotException), err:
             LOG.error(err)
             self.destroyClientContext(cid, context['context'])
-            raise exception.CredentialNotFound()
+            raise exception.Unauthorized()
 
         return resp
 
@@ -167,4 +167,4 @@ class Moonshot(object):
         except (pymoonshot.KrbError, MoonshotException), err:
             LOG.error(err)
             self.destroyClientContext(cid, context['context'])
-        raise exception.CredentialNotFound()
+        raise exception.Unauthorized()
