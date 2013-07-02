@@ -75,11 +75,8 @@ class Federated(auth.AuthMethodHandler):
         
         if not auth_payload.get("provider_id"):
             return {"response":"Identity Provider not found or not recognised"}
-        print auth_payload
         self.discovery_driver.populate_auth_dict(auth_payload,
                                                  auth_payload.get("provider_id"))
-        
-        print auth_payload
         
         protocol = auth_payload["protocol"]
         response = get_auth_protocol(protocol).request_auth(auth_payload)
