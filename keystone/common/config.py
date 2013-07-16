@@ -422,6 +422,9 @@ def configure():
     register_str(
         'discovery', group='auth',
         default='keystone.auth.plugins.federated.discovery.Default')
+    register_str(
+        'mapping_file', group='auth',
+        default='/etc/keystone/mapping_file')
 
     # register any non-default auth methods here (used by extensions, etc)
     for method_name in CONF.auth.methods:

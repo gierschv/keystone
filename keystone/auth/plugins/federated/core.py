@@ -6,6 +6,7 @@ Created on 7 Jun 2013
 
 from keystone import auth
 from keystone import exception
+from keystone import identity
 from keystone.common import config
 from keystone.common import logging
 from keystone.openstack.common import importutils
@@ -60,8 +61,15 @@ class Federated(auth.AuthMethodHandler):
             return response.get("response")
         
         else:
+            self.identity_api = identity.controllers.RoleV3() 
             auth_context["user_id"] = user_management.UserManager().manage(response["uid"])
-        
+            auth_context["attributes"] = self.mapping_api.map(response["attributes"])
+            auth_context["extras"]["projects"] = []
+            for att in auth_context["attributes"]:
+                for role in att["role"]:
+                    for project in att["project"]:
+                        auth_context["extras"]["projects"].append(project);
+                        self.identity_api.create_grant({"is_admin": True}, role_id=role, user_id=auth_context["user_id"], project_id=project)
         return    
     
     def discovery(self, auth_payload):
