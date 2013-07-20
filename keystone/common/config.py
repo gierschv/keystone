@@ -425,6 +425,7 @@ def configure():
     register_str(
         'mapping_file', group='auth',
         default='/etc/keystone/mapping_file')
+    register_int('moonshot_ctx_timeout', group='auth', default=60)
 
     # register any non-default auth methods here (used by extensions, etc)
     for method_name in CONF.auth.methods:

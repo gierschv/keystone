@@ -12,8 +12,10 @@ import uuid
 import platform
 import pymoonshot
 
+from keystone.common import config
 from keystone import exception
 
+CONF = config.CONF
 LOG = logging.getLogger(__name__)
 
 
@@ -31,8 +33,8 @@ class Moonshot(object):
             self.destroyClientContext(cid)
 
     def setClientContext(self, cid, context):
-        # TODO: add to conf file
-        context['expires'] = datetime.now() + timedelta(seconds=60)
+        timeout = CONF.auth.get('moonshot_ctx_timeout')
+        context['expires'] = datetime.now() + timedelta(seconds=timeout)
         Moonshot.contexts[cid] = context
 
     def getClientContext(self, cid):
