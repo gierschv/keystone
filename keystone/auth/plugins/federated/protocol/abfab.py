@@ -1,9 +1,19 @@
-'''
-Created on 13 Jun 2013
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-@author: Vincent Giersch
+# Copyright 2012 OpenStack LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 
-'''
 
 from datetime import date, datetime, timedelta
 import logging
@@ -19,42 +29,42 @@ CONF = config.CONF
 LOG = logging.getLogger(__name__)
 
 
-class MoonshotException(Exception):
+class ABFABException(Exception):
     pass
 
 
-class Moonshot(object):
+class ABFAB(object):
     # GSS contexts
     contexts = {}
 
     def __exit__(self, type, value, traceback):
-        for cid in Moonshot.contexts.keys():
+        for cid in ABFAB.contexts.keys():
             LOG.debug('Clean GSSAPI context: %s', cid)
             self.destroyClientContext(cid)
 
     def setClientContext(self, cid, context):
-        timeout = CONF.auth.get('moonshot_ctx_timeout')
+        timeout = CONF.auth.get('abfab_ctx_timeout')
         context['expires'] = datetime.now() + timedelta(seconds=timeout)
-        Moonshot.contexts[cid] = context
+        ABFAB.contexts[cid] = context
 
     def getClientContext(self, cid):
         self.cleanExpiredContextes()
-        if cid in Moonshot.contexts:
-            return Moonshot.contexts[cid]
+        if cid in ABFAB.contexts:
+            return ABFAB.contexts[cid]
         return None
 
     def cleanExpiredContextes(self):
-        for cid in Moonshot.contexts.keys():
-            if Moonshot.contexts[cid]['expires'] < datetime.now():
+        for cid in ABFAB.contexts.keys():
+            if ABFAB.contexts[cid]['expires'] < datetime.now():
                 LOG.debug('Clean expired GSSAPI context: %s', cid)
                 self.destroyClientContext(cid)
 
     def destroyClientContext(self, cid=None, context=None, clean=True):
         try:
             if cid is not None:
-                if cid in Moonshot.contexts:
+                if cid in ABFAB.contexts:
                     pymoonshot.authGSSServerClean(
-                        Moonshot.contexts.pop(cid)['context']
+                        ABFAB.contexts.pop(cid)['context']
                     )
             if context is not None:
                 pymoonshot.authGSSServerClean(context)
@@ -63,24 +73,24 @@ class Moonshot(object):
             LOG.error('GSS clean error: %s' % err)
 
     # Plugin steps
-    def request_auth(self, auth_payload):
+    def request_auth(self, protocol_data):
         return {
             'mechanism': '{1 3 6 1 5 5 15 1 1 18}',
-            'serviceName': 'keystone@%s' % platform.node()
+            'service_name': 'keystone@%s' % platform.node()
         }
 
-    def negotiate(self, auth_payload):
+    def negotiate(self, protocol_data):
         # Client identifier
-        if 'cid' in auth_payload and auth_payload['cid'] is not None:
-            cid = uuid.UUID(auth_payload['cid']).hex
+        if 'cid' in protocol_data and protocol_data['cid'] is not None:
+            cid = uuid.UUID(protocol_data['cid']).hex
         else:
             cid = uuid.uuid4().hex
 
         # Negotiation string
-        negotiation = auth_payload.get('negotiation')
+        negotiation = protocol_data.get('negotiation')
         if not negotiation:
             raise exception.ValidationError(
-                attribute='negotiation', target=auth_payload
+                attribute='negotiation', target=protocol_data
             )
 
         context = self.getClientContext(cid)
@@ -91,11 +101,11 @@ class Moonshot(object):
             if context is None:
                 context = {}
                 result, context['context'] = pymoonshot.authGSSServerInit(
-                    'keystone@%s' % platform.node(),
-                    '{1 3 6 1 5 5 15 1 1 18}'
+                    'keystone@%s' % platform.node()
+                    #'{1 3 6 1 5 5 15 1 1 18}'
                 )
                 if result != 1:
-                    raise MoonshotException(
+                    raise ABFABException(
                         'moonshot.authGSSServerInit returned %d' % result
                     )
 
@@ -108,19 +118,21 @@ class Moonshot(object):
                 context['context']
             )
 
-        except (pymoonshot.KrbError, MoonshotException), err:
+            #LOG.debug('Context = %r'% context)
+
+        except (pymoonshot.KrbError, ABFABException), err:
             LOG.error(err)
             self.destroyClientContext(cid, context['context'])
             raise exception.Unauthorized()
 
         return resp
 
-    def validate(self, auth_payload):
+    def validate(self, protocol_data):
         # Client identifier
-        cid = auth_payload.get('cid')
+        cid = protocol_data.get('cid')
         if not cid:
             raise exception.ValidationError(
-                attribute='cid', target=auth_payload
+                attribute='cid', target=protocol_data
             )
 
         context = self.getClientContext(cid)
@@ -165,7 +177,7 @@ class Moonshot(object):
 
                 return names[0], atts, expires
 
-        except (pymoonshot.KrbError, MoonshotException), err:
+        except (pymoonshot.KrbError, ABFABException), err:
             LOG.error(err)
             self.destroyClientContext(cid, context['context'])
         raise exception.Unauthorized()

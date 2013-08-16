@@ -57,11 +57,16 @@ class Federated(auth.AuthMethodHandler):
         except AttributeError as e:
             return "Authentication phase not supported: " + e.message
         
-        if response.get("response") is not None:
-            return response.get("response")
-        
+        if response.get('response') is not None:
+            if phase == 'discovery':
+                return response.get('response')
+            res = {}
+            res['protocol'] = auth_payload.get('protocol')
+            res['protocol_data'] = response.get('response')
+            res['provider_id'] = auth_payload.get('provider_id')
+            return res
         else:
-            self.identity_api = identity.controllers.RoleV3() 
+            self.identity_api = identity.controllers.RoleV3()
             auth_context["user_id"] = user_management.UserManager().manage(response["uid"])
             auth_context["attributes"] = self.mapping_api.map(response["attributes"])
             auth_context["extras"]["projects"] = []
@@ -87,7 +92,8 @@ class Federated(auth.AuthMethodHandler):
                                                  auth_payload.get("provider_id"))
         
         protocol = auth_payload["protocol"]
-        response = get_auth_protocol(protocol).request_auth(auth_payload)
+        protocol_data = auth_payload.get("protocol_data", None)
+        response = get_auth_protocol(protocol).request_auth(protocol_data)
         return {"response": response}
     
     def negotiate(self, auth_payload):
@@ -95,7 +101,8 @@ class Federated(auth.AuthMethodHandler):
             return {"response":"Identity Provider not found or not recognised"}
         if not auth_payload.get("protocol"):
             auth_payload["protocol"] = "saml"
-        response = get_auth_protocol(auth_payload["protocol"]).negotiate(auth_payload)
+        protocol_data = auth_payload.get("protocol_data", None)
+        response = get_auth_protocol(auth_payload["protocol"]).negotiate(protocol_data)
         return {"response" : response}
     
     def validate(self, auth_payload):
@@ -104,7 +111,8 @@ class Federated(auth.AuthMethodHandler):
         if not auth_payload.get("protocol"):
             auth_payload["protocol"] = "saml"
         response = {"response": None}
-        response["uid"], response["attributes"], response["expiry"] = get_auth_protocol(auth_payload["protocol"]).validate(auth_payload)
+        protocol_data = auth_payload.get("protocol_data", None)
+        response["uid"], response["attributes"], response["expiry"] = get_auth_protocol(auth_payload["protocol"]).validate(protocol_data)
         return response
         
         

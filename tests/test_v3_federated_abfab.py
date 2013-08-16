@@ -1,11 +1,19 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-'''
-Created on 30 Jun 2013
+# Copyright 2012 OpenStack LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
 
-@author: Vincent Giersch
-
-'''
 
 import platform
 import pymoonshot as moonshot
@@ -21,16 +29,16 @@ from keystone.auth.plugins.federated import Federated
 METHOD_NAME = 'federated'
 
 
-class TestFederatedMoonshot(test.TestCase):
+class TestFederatedABFAB(test.TestCase):
     def setUp(self):
-        super(TestFederatedMoonshot, self).setUp()
+        super(TestFederatedABFAB, self).setUp()
 
         self.config([
             test.etcdir('keystone.conf.sample'),
             test.testsdir('test_overrides.conf'),
             test.testsdir('backend_sql.conf'),
             test.testsdir('backend_sql_disk.conf'),
-            test.testsdir('test_v3_federated_moonshot.conf')])
+            test.testsdir('test_v3_federated_abfab.conf')])
 
         self.catalog_api = catalog.Manager()
 
@@ -43,13 +51,13 @@ class TestFederatedMoonshot(test.TestCase):
 
     def tearDown(self):
         sql_util.teardown_test_database()
-        super(TestFederatedMoonshot, self).tearDown()
+        super(TestFederatedABFAB, self).tearDown()
 
     def load_fixtures(self):
         self.service = {
             'id': uuid.uuid4().hex,
-            'type': 'idp.moonshot',
-            'name': 'moonshot'
+            'type': 'idp.abfab',
+            'name': 'abfab'
         }
         self.catalog_api.create_service(
             self.service['id'], self.service.copy()
@@ -117,6 +125,7 @@ class TestFederatedMoonshot(test.TestCase):
         auth_data['federated'] = {
             'phase': 'request',
             'protocol': self.service['name'],
+            'protocol_data': {},
             'provider_id': self.service['id']
         }
         auth_data = {'identity': auth_data}
@@ -127,12 +136,13 @@ class TestFederatedMoonshot(test.TestCase):
             try:
                 self.auth_api.authenticate({}, auth_info, auth_context)
             except exception.AdditionalAuthRequired as e:
+                response = e.authentication[METHOD_NAME]
                 self.assertEqual(
-                    e.authentication[METHOD_NAME]['serviceName'],
+                    response['protocol_data']['service_name'],
                     'keystone@%s' % platform.node()
                 )
                 self.assertEqual(
-                    e.authentication[METHOD_NAME]['mechanism'],
+                    response['protocol_data']['mechanism'],
                     '{1 3 6 1 5 5 15 1 1 18}'
                 )
                 raise
@@ -143,7 +153,9 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'negotiate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
-            'cid': '42',
+            'protocol_data': {
+                'cid': '42'
+            }
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -158,7 +170,9 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'negotiate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
-            'cid': None,
+            'protocol_data': {
+                'cid': None
+            }
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -173,8 +187,10 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'negotiate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
-            'cid': uuid.uuid4().hex,
-            'negotiation': uuid.uuid4().hex
+            'protocol_data': {
+                'cid': uuid.uuid4().hex,
+                'negotiation': uuid.uuid4().hex
+            }
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -189,6 +205,7 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'validate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
+            'protocol_data': {}
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -203,7 +220,9 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'validate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
-            'cid': '42',
+            'protocol_data': {
+                'cid': '42'
+            }
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -226,8 +245,10 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'negotiate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
-            'cid': None,
-            'negotiation': str_negotiation
+            'protocol_data': {
+                'cid': None,
+                'negotiation': str_negotiation
+            }
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -235,14 +256,16 @@ class TestFederatedMoonshot(test.TestCase):
         try:
             self.auth_api.authenticate({}, auth_info, auth_context)
         except exception.AdditionalAuthRequired as e:
-            cid = e.authentication[METHOD_NAME]['cid']
+            cid = e.authentication[METHOD_NAME]['protocol_data']['cid']
 
             auth_data = {'methods': [METHOD_NAME]}
             auth_data['federated'] = {
                 'phase': 'validate',
                 'protocol': self.service['name'],
                 'provider_id': self.service['id'],
-                'cid': cid,
+                'protocol_data': {
+                    'cid': cid
+                }
             }
             auth_data = {'identity': auth_data}
             auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -276,8 +299,10 @@ class TestFederatedMoonshot(test.TestCase):
                     'phase': 'negotiate',
                     'protocol': self.service['name'],
                     'provider_id': self.service['id'],
-                    'cid': cid,
-                    'negotiation': str_negotiation
+                    'protocol_data': {
+                        'cid': cid,
+                        'negotiation': str_negotiation
+                    }
                 }
                 auth_data = {'identity': auth_data}
                 auth_info = auth.controllers.AuthInfo(None, auth_data)
@@ -287,11 +312,12 @@ class TestFederatedMoonshot(test.TestCase):
                         self.auth_api.authenticate({}, auth_info, auth_context)
                     except exception.AdditionalAuthRequired as e:
                         response = e.authentication[METHOD_NAME]
-                        self.assertIn('negotiation', response)
-                        self.assertIn('cid', e.authentication[METHOD_NAME])
+                        protocol_data = response['protocol_data']
+                        self.assertIn('negotiation', protocol_data)
+                        self.assertIn('cid', protocol_data)
 
-                        str_negotiation = response['negotiation']
-                        cid = response['cid']
+                        str_negotiation = protocol_data['negotiation']
+                        cid = protocol_data['cid']
                         raise
 
         # Validation
@@ -300,7 +326,9 @@ class TestFederatedMoonshot(test.TestCase):
             'phase': 'validate',
             'protocol': self.service['name'],
             'provider_id': self.service['id'],
-            'cid': cid,
+            'protocol_data': {
+                'cid': cid
+            }
         }
         auth_data = {'identity': auth_data}
         auth_info = auth.controllers.AuthInfo(None, auth_data)

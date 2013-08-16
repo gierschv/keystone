@@ -400,19 +400,19 @@ def configure():
     register_str(
         'token', group='auth',
         default='keystone.auth.plugins.password.Password')
-    
+
     register_list('protocols', group='auth', default=_DEFAULT_AUTH_PROTOCOLS)
     register_str(
         'saml', group='auth',
         default='keystone.auth.plugins.federated.protocol.saml.SAML')
     register_str(
-        'moonshot', group='auth',
-        default='keystone.auth.plugins.federated.protocol.moonshot.Moonshot')
+        'abfab', group='auth',
+        default='keystone.auth.plugins.federated.protocol.abfab.ABFAB')
     # register any non-default auth protocols here (
     for protocol_name in CONF.auth.protocols:
         if protocol_name not in _DEFAULT_AUTH_PROTOCOLS:
             register_str(protocol_name, group='auth')
-    
+
     register_str(
         'attribute_mapper', group='auth',
         default='keystone.auth.plugins.federated.mapping.Default')
@@ -425,7 +425,7 @@ def configure():
     register_str(
         'mapping_file', group='auth',
         default='/etc/keystone/mapping_file')
-    register_int('moonshot_ctx_timeout', group='auth', default=60)
+    register_int('abfab_ctx_timeout', group='auth', default=60)
 
     # register any non-default auth methods here (used by extensions, etc)
     for method_name in CONF.auth.methods:

@@ -27,11 +27,11 @@ class UserManager(object):
         user_ref = {'id': new_id, 'name': new_id, 'password': tempPass}
         try:
             user = self.identity_api.create_user({'is_admin': True}, user=user_ref)['user']
-            return user, tempPass
+            # return user, tempPass
         except exception.Conflict:
             users = self.identity_api.list_users({"is_admin": True, "query_string":{}, "path":""})
             for u in users["users"]:
                 if new_id == u["name"]:
                     user = u
         # Return user
-            return user["id"]
+        return user["id"]
